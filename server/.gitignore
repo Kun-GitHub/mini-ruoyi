@@ -1,0 +1,31 @@
+# Copyright (c) [2025] Kong All rights reserved.
+# Use of this source code is governed by a Apache 2.0 license that can be found in the LICENSE file.
+# Author: Kong See：https://github.com/saas-zero/saas-zero or https://gitee.com/saas-zero/saas-zero
+# Email: hot_kun@hotmail.com
+
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.idea
+
+.idea/
+.claude/
+.vscode/
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Project runtime log
+logs/*.log
+config/config.yaml
+
+.vscode/
+vendor/
