@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
 
-	"mini-ruoyi/internal/handler"
+	"mini-ruoyi/internal/httpx"
 )
 
 // RequestLogger 简单耗时日志。生产建议换 zap/slog，这里保持零依赖。
@@ -67,7 +67,7 @@ func RateLimit(rps float64, burst int, idleTTL time.Duration) gin.HandlerFunc {
 		mu.Unlock()
 
 		if !cl.limiter.Allow() {
-			handler.Fail(c, http.StatusTooManyRequests, "too many requests")
+			httpx.Fail(c, http.StatusTooManyRequests, httpx.KeyTooManyRequests)
 			c.Abort()
 			return
 		}

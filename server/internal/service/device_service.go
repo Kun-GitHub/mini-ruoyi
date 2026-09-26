@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"mini-ruoyi/internal/domain"
 	"mini-ruoyi/internal/repository"
 )
 
@@ -23,15 +24,15 @@ type CreateDeviceInput struct {
 
 // DevicePage 是列表接口的统一分页结构。list 永远是非 nil 数组。
 type DevicePage struct {
-	List     []repository.Device `json:"list"`
-	Total    int64               `json:"total"`
-	Page     int                 `json:"page"`
-	PageSize int                 `json:"page_size"`
+	List     []domain.Device `json:"list"`
+	Total    int64           `json:"total"`
+	Page     int             `json:"page"`
+	PageSize int             `json:"page_size"`
 }
 
-func (s *DeviceService) Create(ctx context.Context, in CreateDeviceInput) (repository.Device, error) {
+func (s *DeviceService) Create(ctx context.Context, in CreateDeviceInput) (domain.Device, error) {
 	// 业务规则放这一层，比如：同名设备校验、默认值处理等
-	return s.repo.Create(ctx, repository.Device{
+	return s.repo.Create(ctx, domain.Device{
 		Name:     in.Name,
 		Location: in.Location,
 		Enabled:  in.Enabled,
@@ -57,8 +58,12 @@ func (s *DeviceService) List(ctx context.Context, page, pageSize int) (DevicePag
 	}, nil
 }
 
-func (s *DeviceService) Get(ctx context.Context, id int64) (repository.Device, error) {
-	return s.repo.GetByID(ctx, id)
+func (s *DeviceService) Get(ctx context.Context, id int64) (domain.Device, error) {
+	d, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return domain.Device{}, fmt.Errorf("get device %d: %w", id, err)
+	}
+	return d, nil
 }
 
 func (s *DeviceService) SetEnabled(ctx context.Context, id int64, enabled bool) error {
@@ -69,7 +74,10 @@ func (s *DeviceService) SetEnabled(ctx context.Context, id int64, enabled bool) 
 }
 
 func (s *DeviceService) Delete(ctx context.Context, id int64) error {
-	return s.repo.Delete(ctx, id)
+	if err := s.repo.Delete(ctx, id); err != nil {
+		return fmt.Errorf("delete device %d: %w", id, err)
+	}
+	return nil
 }
 
 func normalizePage(page, pageSize int) (int, int) {

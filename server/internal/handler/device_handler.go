@@ -1,13 +1,12 @@
 package handler
 
 import (
-	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 
-	"mini-ruoyi/internal/repository"
+	"mini-ruoyi/internal/httpx"
 	"mini-ruoyi/internal/service"
 )
 
@@ -28,17 +27,17 @@ type createDeviceRequest struct {
 func (h *DeviceHandler) Create(c *gin.Context) {
 	var req createDeviceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		Fail(c, http.StatusBadRequest, err.Error())
+		httpx.FailBindError(c, err)
 		return
 	}
 	d, err := h.svc.Create(c.Request.Context(), service.CreateDeviceInput{
 		Name: req.Name, Location: req.Location, Enabled: req.Enabled,
 	})
 	if err != nil {
-		Fail(c, http.StatusInternalServerError, "create failed")
+		httpx.FailFromError(c, err)
 		return
 	}
-	Success(c, d)
+	httpx.Success(c, d)
 }
 
 func (h *DeviceHandler) List(c *gin.Context) {
@@ -47,28 +46,23 @@ func (h *DeviceHandler) List(c *gin.Context) {
 
 	list, err := h.svc.List(c.Request.Context(), page, pageSize)
 	if err != nil {
-		Fail(c, http.StatusInternalServerError, "list failed")
+		httpx.FailFromError(c, err)
 		return
 	}
-	Success(c, list)
+	httpx.Success(c, list)
 }
 
 func (h *DeviceHandler) Get(c *gin.Context) {
-	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, err := parseID(c)
 	if err != nil {
-		Fail(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	d, err := h.svc.Get(c.Request.Context(), id)
-	if errors.Is(err, repository.ErrNotFound) {
-		Fail(c, http.StatusNotFound, "device not found")
-		return
-	}
 	if err != nil {
-		Fail(c, http.StatusInternalServerError, "get failed")
+		httpx.FailFromError(c, err)
 		return
 	}
-	Success(c, d)
+	httpx.Success(c, d)
 }
 
 // Enabled 用指针是为了区分「没传这个字段」和「传了 false」：
@@ -78,44 +72,45 @@ type updateDeviceRequest struct {
 }
 
 func (h *DeviceHandler) Update(c *gin.Context) {
-	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, err := parseID(c)
 	if err != nil {
-		Fail(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	var req updateDeviceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		Fail(c, http.StatusBadRequest, err.Error())
+		httpx.FailBindError(c, err)
 		return
 	}
 	if req.Enabled == nil {
-		Fail(c, http.StatusBadRequest, "enabled is required")
+		httpx.FailValidation(c, []httpx.FieldError{{Field: "enabled", Rule: "required"}})
 		return
 	}
 	if err := h.svc.SetEnabled(c.Request.Context(), id, *req.Enabled); err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			Fail(c, http.StatusNotFound, "device not found")
-			return
-		}
-		Fail(c, http.StatusInternalServerError, "update failed")
+		httpx.FailFromError(c, err)
 		return
 	}
-	Success(c, gin.H{"id": id, "enabled": *req.Enabled})
+	httpx.Success(c, gin.H{"id": id, "enabled": *req.Enabled})
 }
 
 func (h *DeviceHandler) Delete(c *gin.Context) {
-	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	id, err := parseID(c)
 	if err != nil {
-		Fail(c, http.StatusBadRequest, "invalid id")
 		return
 	}
 	if err := h.svc.Delete(c.Request.Context(), id); err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			Fail(c, http.StatusNotFound, "device not found")
-			return
-		}
-		Fail(c, http.StatusInternalServerError, "delete failed")
+		httpx.FailFromError(c, err)
 		return
 	}
-	c.Status(http.StatusNoContent)
+	// 不返回 204：所有接口统一走响应信封，前端无需特判空 body
+	httpx.Success(c, gin.H{"id": id})
+}
+
+// parseID 解析路径参数 id，失败时已写好 400 响应，调用方直接 return 即可。
+func parseID(c *gin.Context) (int64, error) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		httpx.Fail(c, http.StatusBadRequest, httpx.KeyInvalidID)
+		return 0, err
+	}
+	return id, nil
 }

@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"path/filepath"
+
+	"mini-ruoyi/internal/domain"
 	"testing"
 )
 
@@ -26,7 +28,7 @@ func newTestRepo(t *testing.T) (*DeviceRepository, context.Context) {
 func TestCreateReturnsGeneratedFields(t *testing.T) {
 	repo, ctx := newTestRepo(t)
 
-	got, err := repo.Create(ctx, Device{Name: "sensor-1", Location: "lab", Enabled: true})
+	got, err := repo.Create(ctx, domain.Device{Name: "sensor-1", Location: "lab", Enabled: true})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -59,7 +61,7 @@ func TestCountAndPagination(t *testing.T) {
 	repo, ctx := newTestRepo(t)
 
 	for _, name := range []string{"a", "b", "c"} {
-		if _, err := repo.Create(ctx, Device{Name: name, Location: "lab"}); err != nil {
+		if _, err := repo.Create(ctx, domain.Device{Name: name, Location: "lab"}); err != nil {
 			t.Fatalf("Create %s: %v", name, err)
 		}
 	}
@@ -88,13 +90,13 @@ func TestCountAndPagination(t *testing.T) {
 func TestUpdateAndDeleteNotFound(t *testing.T) {
 	repo, ctx := newTestRepo(t)
 
-	if err := repo.Update(ctx, 999, true); err != ErrNotFound {
-		t.Errorf("Update 不存在的 id 返回 %v，期望 ErrNotFound", err)
+	if err := repo.Update(ctx, 999, true); err != domain.ErrNotFound {
+		t.Errorf("Update 不存在的 id 返回 %v，期望 domain.ErrNotFound", err)
 	}
-	if err := repo.Delete(ctx, 999); err != ErrNotFound {
-		t.Errorf("Delete 不存在的 id 返回 %v，期望 ErrNotFound", err)
+	if err := repo.Delete(ctx, 999); err != domain.ErrNotFound {
+		t.Errorf("Delete 不存在的 id 返回 %v，期望 domain.ErrNotFound", err)
 	}
-	if _, err := repo.GetByID(ctx, 999); err != ErrNotFound {
-		t.Errorf("GetByID 不存在的 id 返回 %v，期望 ErrNotFound", err)
+	if _, err := repo.GetByID(ctx, 999); err != domain.ErrNotFound {
+		t.Errorf("GetByID 不存在的 id 返回 %v，期望 domain.ErrNotFound", err)
 	}
 }

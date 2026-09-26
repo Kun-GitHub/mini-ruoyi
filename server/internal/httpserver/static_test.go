@@ -36,6 +36,9 @@ func newStaticFixture(t *testing.T) (*gin.Engine, string) {
 		t.Fatalf("NewDB: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
+	if err := repository.Migrate(t.Context(), db); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
 
 	svc := service.NewDeviceService(repository.NewDeviceRepository(db))
 	r, err := NewRouter(handler.NewDeviceHandler(svc), db, webDir)
@@ -152,6 +155,9 @@ func TestAPIOnlyDeployment(t *testing.T) {
 		t.Fatalf("NewDB: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
+	if err := repository.Migrate(t.Context(), db); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
 
 	svc := service.NewDeviceService(repository.NewDeviceRepository(db))
 	r, err := NewRouter(handler.NewDeviceHandler(svc), db, filepath.Join(t.TempDir(), "nonexistent"))

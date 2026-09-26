@@ -10,7 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"mini-ruoyi/internal/handler"
+	"mini-ruoyi/internal/httpx"
 )
 
 const AssetsPrefix = "/assets/"
@@ -44,7 +44,7 @@ func MountStatic(r *gin.Engine, webDir string) error {
 		// 否则前端会把一整页 HTML 当 JSON 解析，报错信息完全看不出真正原因
 		if !serveSPA || strings.HasPrefix(c.Request.URL.Path, "/api/") ||
 			strings.HasPrefix(c.Request.URL.Path, AssetsPrefix) {
-			handler.Fail(c, http.StatusNotFound, "not found")
+			httpx.Fail(c, http.StatusNotFound, httpx.KeyNotFound)
 			return
 		}
 		// SPA fallback：刷新 /system/user 这类前端路由不返回 404。

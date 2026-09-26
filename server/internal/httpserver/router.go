@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"mini-ruoyi/internal/handler"
+	"mini-ruoyi/internal/httpx"
 	"mini-ruoyi/internal/middleware"
 )
 
@@ -21,6 +22,9 @@ const (
 // NewRouter 组装路由。前端产物目录不可用时直接返回错误，让进程启动即失败，
 // 而不是等用户访问了才发现路径配错。
 func NewRouter(h *handler.DeviceHandler, db *sql.DB, webDir string) (*gin.Engine, error) {
+	// 校验错误的字段名用 json tag 输出，需在注册路由前生效
+	httpx.RegisterJSONFieldNames()
+
 	r := gin.New()
 	r.Use(gin.Recovery(), middleware.RequestLogger())
 
@@ -38,10 +42,10 @@ func NewRouter(h *handler.DeviceHandler, db *sql.DB, webDir string) (*gin.Engine
 
 	r.GET("/healthz", func(c *gin.Context) {
 		if err := db.PingContext(c.Request.Context()); err != nil {
-			handler.Fail(c, http.StatusServiceUnavailable, "db unavailable")
+			httpx.Fail(c, http.StatusServiceUnavailable, httpx.KeyServiceUnavailable)
 			return
 		}
-		handler.Success(c, gin.H{"status": "up"})
+		httpx.Success(c, gin.H{"status": "up"})
 	})
 
 	v1 := r.Group("/api/v1")
