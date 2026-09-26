@@ -7,8 +7,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"gin-sqlite-example/internal/repository"
-	"gin-sqlite-example/internal/service"
+	"mini-ruoyi/internal/repository"
+	"mini-ruoyi/internal/service"
 )
 
 type DeviceHandler struct {
@@ -71,8 +71,10 @@ func (h *DeviceHandler) Get(c *gin.Context) {
 	Success(c, d)
 }
 
+// Enabled 用指针是为了区分「没传这个字段」和「传了 false」：
+// 用 bool 的话 PATCH 一个 {} 会把 enabled 静默改成 false。
 type updateDeviceRequest struct {
-	Enabled bool `json:"enabled"`
+	Enabled *bool `json:"enabled"`
 }
 
 func (h *DeviceHandler) Update(c *gin.Context) {
@@ -86,7 +88,11 @@ func (h *DeviceHandler) Update(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.svc.SetEnabled(c.Request.Context(), id, req.Enabled); err != nil {
+	if req.Enabled == nil {
+		Fail(c, http.StatusBadRequest, "enabled is required")
+		return
+	}
+	if err := h.svc.SetEnabled(c.Request.Context(), id, *req.Enabled); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			Fail(c, http.StatusNotFound, "device not found")
 			return
@@ -94,7 +100,7 @@ func (h *DeviceHandler) Update(c *gin.Context) {
 		Fail(c, http.StatusInternalServerError, "update failed")
 		return
 	}
-	Success(c, gin.H{"id": id, "enabled": req.Enabled})
+	Success(c, gin.H{"id": id, "enabled": *req.Enabled})
 }
 
 func (h *DeviceHandler) Delete(c *gin.Context) {

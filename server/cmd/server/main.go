@@ -11,16 +11,27 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"gin-sqlite-example/internal/config"
-	"gin-sqlite-example/internal/handler"
-	"gin-sqlite-example/internal/middleware"
-	"gin-sqlite-example/internal/repository"
-	"gin-sqlite-example/internal/service"
+	"mini-ruoyi/internal/config"
+	"mini-ruoyi/internal/handler"
+	"mini-ruoyi/internal/httpserver"
+	"mini-ruoyi/internal/repository"
+	"mini-ruoyi/internal/service"
+)
+
+const (
+	readTimeout     = 5 * time.Second
+	writeTimeout    = 10 * time.Second
+	idleTimeout     = 60 * time.Second
+	shutdownTimeout = 15 * time.Second // 必须大于 writeTimeout，否则会掐断进行中的响应
 )
 
 func main() {
 	cfg := config.Load()
-	gin.SetMode(gin.ReleaseMode)
+	if cfg.Debug {
+		gin.SetMode(gin.DebugMode)
+	} else {
+		gin.SetMode(gin.ReleaseMode)
+	}
 
 	// ---- 依赖组装：repository -> service -> handler（手工 DI，不引入 wire/fx）----
 	db, err := repository.NewDB(cfg.DBPath)
@@ -29,18 +40,25 @@ func main() {
 	}
 	defer db.Close()
 
+	if err := repository.Migrate(context.Background(), db); err != nil {
+		log.Fatalf("migrate: %v", err)
+	}
+
 	deviceRepo := repository.NewDeviceRepository(db)
 	deviceSvc := service.NewDeviceService(deviceRepo)
 	deviceHandler := handler.NewDeviceHandler(deviceSvc)
 
-	router := setupRouter(deviceHandler)
+	router, err := httpserver.NewRouter(deviceHandler, db, cfg.WebDir)
+	if err != nil {
+		log.Fatalf("init router: %v", err)
+	}
 
 	srv := &http.Server{
 		Addr:         cfg.Addr,
 		Handler:      router,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		ReadTimeout:  readTimeout,
+		WriteTimeout: writeTimeout,
+		IdleTimeout:  idleTimeout,
 	}
 
 	go func() {
@@ -55,30 +73,10 @@ func main() {
 	<-quit
 	log.Println("shutting down server...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Fatalf("server forced to shutdown: %s", err)
 	}
 	log.Println("server exited")
-}
-
-func setupRouter(h *handler.DeviceHandler) *gin.Engine {
-	r := gin.New()
-	r.Use(gin.Recovery(), middleware.RequestLogger(), middleware.RateLimit(20, 40))
-
-	r.GET("/healthz", func(c *gin.Context) {
-		handler.Success(c, gin.H{"status": "up"})
-	})
-
-	v1 := r.Group("/api/v1")
-	{
-		devices := v1.Group("/devices")
-		devices.POST("", h.Create)
-		devices.GET("", h.List)
-		devices.GET("/:id", h.Get)
-		devices.PATCH("/:id", h.Update)
-		devices.DELETE("/:id", h.Delete)
-	}
-	return r
 }

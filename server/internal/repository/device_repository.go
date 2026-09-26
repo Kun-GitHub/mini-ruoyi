@@ -4,16 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 )
 
 var ErrNotFound = errors.New("device not found")
 
 type Device struct {
-	ID        int64
-	Name      string
-	Location  string
-	Enabled   bool
-	CreatedAt string
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Location  string    `json:"location"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type DeviceRepository struct {
@@ -24,19 +25,17 @@ func NewDeviceRepository(db *sql.DB) *DeviceRepository {
 	return &DeviceRepository{db: db}
 }
 
+// Create 用 RETURNING 把库生成的 id 和 created_at 一次带回，
+// 否则调用方拿到的 Device 里 created_at 会是零值。
 func (r *DeviceRepository) Create(ctx context.Context, d Device) (Device, error) {
-	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO devices (name, location, enabled) VALUES (?, ?, ?)`,
+	err := r.db.QueryRowContext(ctx,
+		`INSERT INTO devices (name, location, enabled) VALUES (?, ?, ?)
+		 RETURNING id, created_at`,
 		d.Name, d.Location, d.Enabled,
-	)
+	).Scan(&d.ID, &d.CreatedAt)
 	if err != nil {
 		return Device{}, err
 	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return Device{}, err
-	}
-	d.ID = id
 	return d, nil
 }
 
@@ -51,7 +50,8 @@ func (r *DeviceRepository) List(ctx context.Context, limit, offset int) ([]Devic
 	}
 	defer rows.Close()
 
-	var list []Device
+	// 用 make 而不是 var：确保空结果序列化成 [] 而不是 null，前端不必特判
+	list := make([]Device, 0, limit)
 	for rows.Next() {
 		var d Device
 		if err := rows.Scan(&d.ID, &d.Name, &d.Location, &d.Enabled, &d.CreatedAt); err != nil {
@@ -60,6 +60,12 @@ func (r *DeviceRepository) List(ctx context.Context, limit, offset int) ([]Devic
 		list = append(list, d)
 	}
 	return list, rows.Err()
+}
+
+func (r *DeviceRepository) Count(ctx context.Context) (int64, error) {
+	var n int64
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices`).Scan(&n)
+	return n, err
 }
 
 func (r *DeviceRepository) GetByID(ctx context.Context, id int64) (Device, error) {

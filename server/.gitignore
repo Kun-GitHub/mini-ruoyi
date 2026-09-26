@@ -27,5 +27,10 @@
 logs/*.log
 config/config.yaml
 
+# SQLite 运行时副产物。data.db 本身随仓库分发（开箱即用），
+# 但 WAL/SHM 是临时的，且每次启动内容都不同，不应入库。
+*.db-wal
+*.db-shm
+
 .vscode/
 vendor/

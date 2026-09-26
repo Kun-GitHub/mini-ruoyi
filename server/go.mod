@@ -1,4 +1,4 @@
-module gin-sqlite-example
+module mini-ruoyi
 
 go 1.25
 

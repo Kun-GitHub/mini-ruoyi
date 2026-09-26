@@ -3,53 +3,41 @@ package repository
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 
 	_ "modernc.org/sqlite" // 纯 Go 实现，免 CGO，交叉编译方便
 )
 
-// NewDB 打开 SQLite 连接并做低配服务器友好的关键配置：
-//   - WAL 模式：读写不互相阻塞
-//   - busy_timeout：写冲突时等待而不是立刻报错
-//   - 连接池限制为 1（SQLite 本质单写者，多余连接只会增加锁竞争和内存）
+// sqlitePragmas 是「连接级」PRAGMA 的 DSN 下发形式。
+//
+// busy_timeout / foreign_keys / synchronous 都是每条连接各自的设置：用 db.Exec 执行
+// PRAGMA 只会命中连接池里的某一条连接，其余连接仍是默认值（实测 busy_timeout=0、
+// foreign_keys=0）。所以必须走 DSN 的 _pragma，由驱动在每条连接建立时执行。
+// journal_mode=WAL 本身是写入库文件的持久设置，一并放这里以集中行为。
+var sqlitePragmas = func() string {
+	v := url.Values{}
+	v.Add("_pragma", "busy_timeout(5000)")  // 写冲突时等待而不是立刻报 SQLITE_BUSY
+	v.Add("_pragma", "journal_mode(WAL)")   // 读写不互相阻塞
+	v.Add("_pragma", "foreign_keys(1)")     // SQLite 默认关闭外键约束，必须显式打开
+	v.Add("_pragma", "synchronous(NORMAL)") // WAL 下 NORMAL 已足够安全，比 FULL 快很多
+	return v.Encode()
+}()
+
+// NewDB 打开 SQLite 连接，并按低配服务器场景配置连接池。
 func NewDB(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", "file:"+path+"?"+sqlitePragmas)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 
-	pragmas := []string{
-		"PRAGMA journal_mode=WAL;",
-		"PRAGMA busy_timeout=5000;",
-		"PRAGMA synchronous=NORMAL;", // WAL 下 NORMAL 已足够安全，比 FULL 快很多
-		"PRAGMA foreign_keys=ON;",
-	}
-	for _, p := range pragmas {
-		if _, err := db.Exec(p); err != nil {
-			return nil, fmt.Errorf("pragma %q: %w", p, err)
-		}
-	}
-
-	// SQLite 是单写者模型，连接数开多了没意义，反而增加内存和锁等待
+	// SQLite 是单写者模型，写操作本身串行；多出的连接只服务并发读
 	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(4)
 
-	if err := migrate(db); err != nil {
-		return nil, fmt.Errorf("migrate: %w", err)
+	// 提前 Ping，让配置错误在启动时就暴露，而不是等到第一个请求
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("ping sqlite: %w", err)
 	}
 	return db, nil
-}
-
-func migrate(db *sql.DB) error {
-	schema := `
-	CREATE TABLE IF NOT EXISTS devices (
-		id         INTEGER PRIMARY KEY AUTOINCREMENT,
-		name       TEXT NOT NULL,
-		location   TEXT NOT NULL,
-		enabled    INTEGER NOT NULL DEFAULT 0,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-	);
-	CREATE INDEX IF NOT EXISTS idx_devices_location ON devices(location);
-	`
-	_, err := db.Exec(schema)
-	return err
 }

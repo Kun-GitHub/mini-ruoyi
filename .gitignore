@@ -1,0 +1,15 @@
+# Copyright (c) [2025] Kong All rights reserved.
+# Use of this source code is governed by a Apache 2.0 license that can be found in the LICENSE file.
+# Author: Kong See：https://github.com/saas-zero/saas-zero or https://gitee.com/saas-zero/saas-zero
+# Email: hot_kun@hotmail.com
+
+# macOS
+.DS_Store
+
+# 前端依赖与构建产物。构建产物由后端从磁盘目录直接托管，无需入库。
+web/node_modules/
+web/dist/
+
+# Go 构建输出（二进制 + 与其同级的 web/）
+bin/
+.idea/
