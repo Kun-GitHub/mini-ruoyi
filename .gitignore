@@ -6,10 +6,12 @@
 # macOS
 .DS_Store
 
+# 编辑器
+.idea/
+
 # 前端依赖与构建产物。构建产物由后端从磁盘目录直接托管，无需入库。
 web/node_modules/
 web/dist/
 
 # Go 构建输出（二进制 + 与其同级的 web/）
 bin/
-.idea/
