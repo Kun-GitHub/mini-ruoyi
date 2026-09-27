@@ -26,7 +26,10 @@ func MountStatic(r *gin.Engine, webDir string) error {
 	// 整个目录不存在 = 这是一个纯 API 部署，只警告不阻断启动
 	serveSPA := false
 	if _, err := os.Stat(webDir); os.IsNotExist(err) {
-		log.Printf("前端目录 %s 不存在，仅提供 API", webDir)
+		// 这句提示必须明确到「怎么修」：降到纯 API 模式的表现为
+		// 「打开 :8080 看到一句 JSON 404」，很难联想到是前端目录的问题
+		log.Printf("前端目录 %s 不存在，仅提供 API。"+
+			"若要托管前端：执行 make build 生成 bin/web，或设置 APP_WEB_DIR 指向 dist 目录", webDir)
 	} else { // 目录存在但结构不完整 = 部署配置错了，启动即失败好过运行期 404
 		if _, err := os.Stat(indexPath); err != nil {
 			return fmt.Errorf("前端目录 %q 缺少 index.html: %w", webDir, err)
@@ -40,11 +43,19 @@ func MountStatic(r *gin.Engine, webDir string) error {
 	}
 
 	r.NoRoute(func(c *gin.Context) {
+		path := c.Request.URL.Path
+
 		// API 路径和缺失的静态资源绝不能回落到 index.html：
 		// 否则前端会把一整页 HTML 当 JSON 解析，报错信息完全看不出真正原因
-		if !serveSPA || strings.HasPrefix(c.Request.URL.Path, "/api/") ||
-			strings.HasPrefix(c.Request.URL.Path, AssetsPrefix) {
+		if strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, AssetsPrefix) {
 			httpx.Fail(c, http.StatusNotFound, httpx.KeyNotFound)
+			return
+		}
+
+		if !serveSPA {
+			// 纯 API 模式下打开首页是最常见的困惑点：看到一句 JSON 404，
+			// 会以为服务坏了。这里明说是「前端没部署」，并指出两种正确用法。
+			httpx.Fail(c, http.StatusNotFound, httpx.KeyFrontendDisabled)
 			return
 		}
 		// SPA fallback：刷新 /system/user 这类前端路由不返回 404。

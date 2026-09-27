@@ -73,7 +73,20 @@ curl、日志、监控、网关都能直接看出错误率，不用解析 body�
 | 参数校验失败 | 400 | `error.validationFailed` |
 | 请求体格式错误 | 400 | `error.malformedBody` |
 | 路径参数非法 | 400 | `error.invalidId` |
+| 上级节点不合法 | 400 | `error.invalidParent` |
 | 资源不存在 | 404 | `error.notFound` |
+| 未登录 / 会话失效 | 401 | `error.unauthorized` |
+| 用户名或密码错误 | 401 | `error.badCredentials` |
+| 内置资源不可改/删 | 403 | `error.protected` |
+| 账号已停用 | 403 | `error.accountDisabled` |
+| 已登录但缺少权限 | 403 | `error.forbidden` |
+| CSRF 令牌缺失或不匹配 | 403 | `error.csrfInvalid` |
+| 不能删除当前登录账号 | 403 | `error.cannotDeleteSelf` |
+| 存在关联数据，需确认 | 409 | `error.hasDependents`（响应体带影响面，见 §3.4） |
+| 不能删除/停用最后一个管理员 | 409 | `error.lastAdmin` |
+| 唯一字段冲突 | 409 | `error.duplicate`（`errors[]` 带冲突字段名） |
+| 提交了未知权限码 | 400 | `error.invalidPermCode` |
+| 响应不是本服务的信封 | 任意 | `error.backendUnreachable`（**前端产生**：请求没到后端，见 [architecture-web.md](architecture-web.md) §5.3） |
 | 请求体过大 | 413 | `error.bodyTooLarge` |
 | 触发限流 | 429 | `error.tooManyRequests` |
 | 服务不可用 | 503 | `error.serviceUnavailable` |
@@ -105,8 +118,48 @@ curl、日志、监控、网关都能直接看出错误率，不用解析 body�
 1. 响应体永远有 `code` 和 `msg`
 2. 失败响应的 `msg` 永远是 i18n 键，**不含自然语言**（否则前端无法翻译）
 3. `data.list` 在空结果时是 `[]` 而非 `null`（否则前端要特判）
-4. 列表接口的分页结构固定为 `{list, total, page, page_size}`
+4. 列表接口的分页结构固定为 `{list, total, page, page_size}`，且：
+   - `page_size` 小于 1 时取默认 20，**大于上限 100 时钳到 100**（不是悄悄换成 20——
+     要 101 条却拿到 20 条，调用方会以为数据只有这么多）
+   - 响应里的 `page` 是**实际使用的页码**，越界时已钳到最后一页。前端以它为准，
+     否则一个过期的书签会让分页器显示「99 / 2」且表格空白
 5. 时间字段输出 RFC 3339 UTC（Go `time.Time` 的默认 JSON 序列化）
+
+### 3.4 删除有依赖的资源
+
+资源带有子数据时，删除不能被无条件执行。契约是：**服务端在删除时当场算影响面，
+有依赖则返回 `409` 并携带影响面，前端据此弹框，确认后带 `?cascade=true` 重发。**
+
+```
+DELETE /api/v1/menus/5
+→ 409 Conflict
+  {"code":1,"msg":"error.hasDependents",
+   "data":{"child_menus":3,"affected_roles":2}}
+
+DELETE /api/v1/menus/5?cascade=true
+→ 200 {"code":0,"msg":"ok","data":{"id":5}}
+```
+
+各资源的影响面：
+
+| 资源 | 影响面字段 | 含义 |
+| --- | --- | --- |
+| 菜单 | `child_menus` | 后代菜单数（级联删除会一并消失） |
+| 菜单 | `affected_roles` | 引用了该菜单或其任一后代的角色数 |
+| 角色 | `affected_users` | 持有该角色的用户数 |
+| 用户 | — | 不拦截。角色关联是用户自身的附属数据，删除即失效是预期行为 |
+
+**为什么用「409 + 重发」而不是单独的预检接口：**
+
+- 检查与删除在同一次请求里，没有 TOCTOU 窗口。若用 `GET .../deletion-impact` 预检，
+  在弹框与确认之间另一个管理员新增了子节点，用户会在不知情的情况下多删数据——
+  而“不让用户意外多删”正是这个需求的目的
+- 无依赖时（绝大多数情况）只需一次往返
+
+**前端必须遵守的一条规则：** `409` + `msg == "error.hasDependents"` **不是错误**，
+不能弹错误提示，而应直接弹出确认框并把 `data` 里的数字展示出来。
+
+新增错误键：`error.hasDependents`（需同步 `web/src/lib/i18n/`）。
 
 ## 4. 缓存策略
 
@@ -137,6 +190,154 @@ curl、日志、监控、网关都能直接看出错误率，不用解析 body�
 | **不引入 Redis** | Redis 存 session | 单机上 Redis 只增加一个部署单元和一个故障点。同机 SQLite 主键查询（~1-3 µs）比 Redis over loopback（~30-60 µs）还快 |
 | **带内容哈希的静态资源永久缓存** | 统一 `no-cache` | 省掉首屏之外的全部重复请求；哈希保证不会拿错版本 |
 
+## 5.1 四种部署形态
+
+前端产物是纯静态文件，由谁托管都可以。**后端在 `web/` 目录不存在时会降级成纯 API 模式**，
+所以下面四种都能跑：
+
+| 形态 | 前端托管 | 需要的配置 |
+| --- | --- | --- |
+| 1. 单二进制 | Go（`bin/web/`） | 无，默认 |
+| 2. 本地调试 | Vite dev server（`/api` 代理到后端） | `APP_WEB_DIR` 指向不存在的位置即可（或直接不构建前端） |
+| 3. nginx 托管前端 | nginx 静态目录 + `try_files` | `APP_TRUSTED_PROXIES=<代理地址>` |
+| 4. nginx 只做 TLS 终止 | Go（`bin/web/`） | `APP_TRUSTED_PROXIES` + `APP_SECURE_COOKIE=true` |
+
+**形态 2**（Vite 调试）：
+
+```bash
+make dev-server   # 后端 :8080，没有 bin/web 时会打印一行提示，接口照常可用
+make dev-web      # Vite :5173，/api 与 /healthz 代理到 :8080
+```
+
+此时打开 `http://localhost:8080/` 会看到
+`{"code":1,"msg":"error.frontendDisabled"}` —— **这是预期的**，它明确告诉你
+「后端在纯 API 模式，前端没部署」，而不是让你以为服务坏了。
+
+**形态 3**（nginx 托管前端）：
+
+```nginx
+server {
+    listen 80;
+    root /opt/mini-ruoyi/web;
+
+    # 带内容哈希的资源可以永久缓存（与后端托管时的策略一致）
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        try_files $uri =404;
+    }
+
+    # index.html 必须回源校验，否则前端重新构建后用户刷新拿不到新版本
+    location / {
+        add_header Cache-Control "no-cache";
+        try_files $uri /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+后端侧：
+
+```bash
+APP_TRUSTED_PROXIES=127.0.0.1   # 必填，见下
+```
+
+### ⚠️ 放在反向代理后面就必须配 `APP_TRUSTED_PROXIES`
+
+它的默认值是**空**，也就是不信任任何 `X-Forwarded-For`。这是对的：本服务可以直接
+对外监听，无条件采信这个头会让客户端随便伪装成任意 IP，按 IP 限流形同虚设。
+
+但反过来，nginx 后面**必须**声明代理地址，否则所有请求的来源 IP 都是 `127.0.0.1`：
+
+| 配置 | `login_ip` 记录 | 按 IP 限流的实际效果 |
+| --- | --- | --- |
+| 不配 | `127.0.0.1`（代理地址） | **退化成全局限流**：一个人刷满 20 rps，所有人一起被 429 |
+| `APP_TRUSTED_PROXIES=127.0.0.1` | 真实客户端 IP | 每个 IP 各自计数 |
+
+支持 IP 与 CIDR，逗号分隔：`APP_TRUSTED_PROXIES=127.0.0.1,10.0.0.0/8`。
+配置非法时**启动即失败**并指出问题，不会静默忽略。
+
+> 注意：即使配了可信代理，`X-Forwarded-For` 的**最左**值也可能被客户端伪造。
+> 本服务用 gin 的默认策略（取最右侧非可信地址），配合「只信任你自己的代理」是安全的。
+
+## 5.2 审计日志为什么不是每请求直写
+
+`sys_login_logs` 与 `sys_oper_logs` **不**在中间件里直接写库，而是走
+「内存 channel 缓冲 + 批量落库」（`service.LogService`）：
+
+```
+请求 → RecordLogin/RecordOper → channel（容量 1024）
+                                    ↓
+                      攒够 64 条或每 2 秒 → 一个事务批量插入
+```
+
+理由：**SQLite 是单写者**。每个请求都写一行日志，就是每个请求都去抢一次写锁
+并付一次事务开销，所有请求会在写锁上排队。攒批之后 N 个请求只付一次代价。
+
+三个配套决定：
+
+| 决定 | 理由 |
+| --- | --- |
+| 缓冲满了**丢日志**并计数 | 这是审计功能，不该拖慢主流程。丢的记录数会在关闭时打日志 |
+| 关闭时 `LogService.Stop()` | 不落掉缓冲区的话，最后几秒的日志会丢——而那恰恰是最可能出问题的时间段 |
+| 保留期分批删（每次 2000 行，每小时检查） | 到期的行可能很多，一条大 DELETE 会长时间持有写锁让所有请求排队 |
+
+**代价是日志最多有 2 秒延迟**。界面上已注明；写测试时要注意——
+断言「日志里出现了某条记录」必须靠「重新加载 + 重试」，
+Playwright 定位器的自动重试只重新求值 DOM，不会重新发请求。
+
+保留期由 `APP_LOG_RETENTION_DAYS` 控制，默认 30 天。
+
+## 5.3 上传文件的三个安全约束
+
+| 约束 | 原因 |
+| --- | --- |
+| 磁盘名由服务端生成（随机 hex），**绝不用用户给的文件名** | 直接拿用户输入当路径就是路径穿越（`../../etc/passwd`） |
+| 上传目录**不能静态挂载**，必须走 handler 鉴权后 `http.ServeContent` | 静态挂载会绕过鉴权，任何人拼一个 URL 就能拿到别人上传的东西 |
+| 下载一律 `Content-Disposition: attachment` + `nosniff` + 固定 `octet-stream` | 上传一个 `.html` 再让它内联渲染，等于在自己域上跑别人的脚本 |
+
+用 `http.ServeContent` 而不是自己读文件再写：它按块流式传输（1G 的机器上把整个文件读进内存就爆了），
+并且白送 Range 支持。
+
+**一致性顺序**：上传是「先落文件、再写库」，删除是「先删库、再删文件」。
+两次取舍方向一致——**宁可留孤儿文件，也不留指向空文件的记录**。
+孤儿由 `cleanup:orphan_files` 任务定期回收。
+
+## 5.4 定时任务为什么不能存在库里
+
+若依是「数据库存 cron + 反射调用 bean 方法」，Go 里走不通：没有安全的反射调用任意函数的方式。
+
+所以任务在代码里注册（`internal/job`），数据库只存开关与 cron 表达式。
+界面上不提供新建任务——造出来的任务永远不会被执行。
+
+启动时按注册表 upsert（`ON CONFLICT DO NOTHING`，不覆盖用户改过的值），
+库里多出来的 key 只告警不拒绝启动。**这与权限码的处理相反**：
+一条永远不会跑的任务记录是无害的，而一条无效的权限码会让授权静默失效。
+
+时区：cron 按**服务器本地时区**解析（「每天凌晨 3 点」是运维的直觉），执行时间落库仍是 UTC。
+
+## 5.5 配置为什么是「文件 + 环境变量」两层
+
+优先级 **环境变量 > 配置文件 > 内置默认值**，且**没有配置文件也能跑**。
+
+| 决定 | 理由 |
+| --- | --- |
+| 保留环境变量且优先级最高 | systemd 与容器只能给环境变量。让它们能覆盖单个值，不必去改（只读挂载的）配置文件 |
+| 没有配置文件不是错误 | 「clone 下来直接跑」是开源项目的底线体验。默认值就是一套能跑的单机配置 |
+| 配置文件**未知字段直接报错** | `KnownFields(true)`。否则把 `max_mb` 写成 `max_size` 不会有任何提示，用户只会觉得「我明明配了怎么不生效」——而这类问题极难往配置上想 |
+| 环境变量**取值非法直接报错** | 同理。静默忽略的话 `APP_UPLOAD_MAX_MB=二十` 会安静地退回默认值 |
+| 启动时校验语义组合 | `quota_mb < max_mb` 能跑起来但一个文件都传不上去，不如启动就拒绝 |
+| 启动打印一行摘要 | 路径一律绝对路径。「数据在哪」「文件传到哪」是运维最常问的两个，而配置里写的 `data.db`、`uploads` 是相对工作目录的 |
+
+`config.yaml` 进 `.gitignore`（含监听地址、代理地址这类逐部署不同的信息），
+提交的样例是 `server/config/config.example.yaml`。
+
 ## 6. 错误键清单
 
 后端定义于 `server/internal/httpx/response.go`，前端字典在 `web/src/lib/i18n/zh-CN.ts`。
@@ -147,8 +348,23 @@ error.notFound              error.tooManyRequests
 error.validationFailed      error.serviceUnavailable
 error.bodyTooLarge          error.invalidId
 error.malformedBody         error.internal
-error.network               # 仅前端使用：fetch 抛异常时
+error.hasDependents         error.protected
+error.cannotDeleteSelf      error.lastAdmin
+error.invalidParent         error.badCredentials
+error.accountDisabled       error.unauthorized
+error.forbidden             error.csrfInvalid
+error.duplicate             error.invalidPermCode
+error.cannotKickSelf        error.frontendDisabled
+error.invalidJobCron        error.fileTooLarge
+error.quotaExceeded         error.invalidFile
+# 以下两个仅由前端产生，后端不会返回：
+error.network               # fetch 抛异常：没有任何东西应答
+error.backendUnreachable    # 有响应但不是信封：请求被代理拦下，或后端没启动
 ```
+
+这些键只定义在 `server/internal/httpx/response.go`，文案在前端字典里。
+`internal/httpx` 与 `internal/perm` 各有一个用例会去读前端字典，确认两边没跑偏——
+否则界面会把 `error.notFound` 这样的原始键名直接显示给用户。
 
 ## 7. 1C1G 约束下的设计取舍
 
@@ -169,7 +385,7 @@ error.network               # 仅前端使用：fetch 抛异常时
 | 项 | 方案 |
 | --- | --- |
 | 认证 | Cookie + 服务端 session 表（HttpOnly / SameSite=Lax），配 CSRF 校验 |
-| 鉴权 | 若依式 RBAC：用户 / 角色 / 菜单 / API 权限；权限点**以代码为准**，在路由上声明（`perm("system:user:add")`） |
+| 鉴权 | 若依式 RBAC：用户 / 角色 / 菜单 / API 权限；表结构见 [schema.md](schema.md)，权限点**以代码为准**，在路由上声明（`perm("system:user:add")`） |
 | 权限缓存 | 进程内 `map[userID]permSet` + 全局版本号，改角色/菜单时 bump 版本整体失效 |
 | 动态路由 | 后端返回菜单树，前端用 `import.meta.glob` 把 `component` 字段映射到页面模块 |
 
@@ -178,7 +394,7 @@ error.network               # 仅前端使用：fetch 抛异常时
 | 项 | 说明 |
 | --- | --- |
 | **LICENSE 文件缺失** | 多个文件头部声明"许可证见 LICENSE 文件"，但仓库没有该文件。要么补上 Apache 2.0 全文，要么去掉声明 |
-| 表结构设计 | `sys_user` / `sys_role` / `sys_menu` 等表由项目维护者设计，之后追加 `migrations/0002_*.sql` |
+| 表结构设计 | ~~待设计~~ **已完成**，见 [schema.md](schema.md) |
 | 初始数据库可复现 | 目前 `server/data.db` 随仓库分发。最终应改为从 `migrations/` + 种子 SQL 重新生成，而不是手工改库后提交 |
 | 字体体积 | Inter 可变字体包含全部子集，`dist` 里 woff2 共 224 KB。若只面向中英文可裁剪为 latin + latin-ext |
 | 操作日志表 | 若依的 `sys_oper_log` 需要每请求一写。SQLite 是单写者，届时应改成内存 channel 缓冲 + 批量落库，而不是直接写库 |

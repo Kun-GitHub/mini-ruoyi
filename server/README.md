@@ -31,109 +31,159 @@ make build && make run       # 二进制与前端产物落在 bin/
 启动时会自动执行未应用的迁移，并创建 `data.db`（若不存在）。
 仓库自带的 `data.db` 是一个空的初始库，开箱即用。
 
-## 环境变量
+## 配置
 
-| 变量 | 默认值 | 说明 |
+**优先级：环境变量 > 配置文件 > 内置默认值。**
+
+```bash
+cp config/config.example.yaml config/config.yaml   # 可选，不改也能跑
+```
+
+`config.yaml` 在 `.gitignore` 里；可提交的样例是 `config/config.example.yaml`，
+每一项都带注释。用 `APP_CONFIG` 可以指定别的路径。
+
+| 变量 | 默认值 | 配置文件里的位置 |
 | --- | --- | --- |
-| `APP_ADDR` | `:8080` | HTTP 监听地址 |
-| `APP_DB_PATH` | `data.db` | SQLite 文件路径，相对**进程工作目录** |
-| `APP_WEB_DIR` | 二进制同级 `web/`，不存在时 `./web` | 前端产物目录 |
-| `APP_ENV` | `prod` | 设为 `dev` 使用 `gin.DebugMode`（输出路由表与警告） |
+| `APP_CONFIG` | `config/config.yaml` | —（配置文件路径本身） |
+| `APP_ADDR` | `:8080` | `server.addr` |
+| `APP_ENV` | `prod` | `server.env` |
+| `APP_SECURE_COOKIE` | `false` | `server.secure_cookie` |
+| `APP_TRUSTED_PROXIES` | 空 | `server.trusted_proxies`（逗号分隔） |
+| `APP_RATE_LIMIT_RPS` | `20` | `server.rate_limit.rps` |
+| `APP_RATE_LIMIT_BURST` | `40` | `server.rate_limit.burst` |
+| `APP_DB_PATH` | `data.db` | `database.path` |
+| `APP_WEB_DIR` | 自动查找 | `web.dir` |
+| `APP_UPLOAD_DIR` | `uploads` | `upload.dir` |
+| `APP_UPLOAD_MAX_MB` | `20` | `upload.max_mb` |
+| `APP_UPLOAD_QUOTA_MB` | `512` | `upload.quota_mb` |
+| `APP_LOG_RETENTION_DAYS` | `30` | `log.retention_days` |
 
-没有配置文件。
+**配置错了会拒绝启动**：配置文件里出现未知字段、环境变量取值非法、
+以及「配额小于单文件上限」这类自相矛盾的组合，都会在启动时失败并指出具体位置。
+静默退回默认值的话，用户只会觉得「我明明配了怎么不生效」。
+
+启动日志里有一行生效配置摘要，路径都是绝对路径。
 
 ## API
 
-所有接口都在 `/api/v1` 下。完整契约见 [../docs/architecture.md](../docs/architecture.md)。
+全部在 `/api/v1` 下。完整契约（信封、错误键、删除确认）见
+[../docs/architecture.md](../docs/architecture.md)。
 
-### `GET /healthz`
+启动时会打印当前端点分类：
 
-探活，会真实 Ping 数据库。
-
-```json
-{"code":0,"msg":"ok","data":{"status":"up"}}
+```
+已注册 23 个 API 端点（公开 1 / 仅登录 2 / 需权限 20）
 ```
 
-数据库不可达时返回 `503` + `{"code":1,"msg":"error.serviceUnavailable"}`。
+**认证方式**：登录后服务端下发 `mr_session` cookie（HttpOnly / SameSite=Lax）。
+除登录外，所有写操作都必须带 `X-CSRF-Token` 头，值取自登录响应或 `/auth/me` 的
+`csrf_token` 字段。
 
-### `POST /api/v1/devices`
+### 端点一览
+
+| 方法 | 路径 | 权限码 | 说明 |
+| --- | --- | --- | --- |
+| POST | `/auth/login` | — **(公开)** | 登录，下发 cookie 与 CSRF 令牌 |
+| GET | `/auth/me` | 仅登录 | 当前用户 + 权限码 + 菜单树 + CSRF 令牌 |
+| POST | `/auth/logout` | 仅登录 | 登出，服务端立即删除会话 |
+| GET | `/menus` | `system:menu:list` | 完整菜单树（含未启用项） |
+| GET | `/menus/:id` | `system:menu:list` | |
+| POST | `/menus` | `system:menu:add` | |
+| PUT | `/menus/:id` | `system:menu:edit` | |
+| DELETE | `/menus/:id` | `system:menu:delete` | 支持 `?cascade=true` |
+| GET | `/roles` | `system:role:list` | 分页 |
+| GET | `/roles/:id` | `system:role:list` | |
+| GET | `/roles/:id/grants` | `system:role:list` | 菜单授权 + 权限码 |
+| POST | `/roles` | `system:role:add` | |
+| PUT | `/roles/:id` | `system:role:edit` | |
+| PUT | `/roles/:id/grants` | `system:role:edit` | 覆盖式重设授权 |
+| DELETE | `/roles/:id` | `system:role:delete` | 支持 `?cascade=true` |
+| GET | `/perms` | `system:perm:list` | 权限清单，按资源分组，**含每个权限码保护的接口**（来自启动时装配的路由表，不查库） |
+| GET | `/users` | `system:user:list` | 分页 |
+| GET | `/users/:id` | `system:user:list` | 含 `role_ids` |
+| POST | `/users` | `system:user:add` | |
+| PUT | `/users/:id` | `system:user:edit` | 用户名不可变 |
+| PUT | `/users/:id/roles` | `system:user:edit` | |
+| PUT | `/users/:id/password` | `system:user:resetPwd` | 重置后**立即踢掉该用户全部会话** |
+| DELETE | `/users/:id` | `system:user:delete` | |
+| GET | `/sessions` | `monitor:session:list` | 在线会话（未过期的），最近活跃在前 |
+| DELETE | `/sessions/:hash` | `monitor:session:kick` | 踢掉一条会话，对方下次请求即失效 |
+| DELETE | `/users/:id/sessions` | `monitor:session:kick` | 强退某用户全部会话 |
+| GET | `/login-logs` | `monitor:loginlog:list` | 登录日志，支持 `username` / `status` 筛选 |
+| GET | `/oper-logs` | `monitor:operlog:list` | 操作日志，支持 `username` / `method` / `path` 筛选 |
+| GET | `/files` | `tool:file:list` | 文件列表，响应还带容量用量 |
+| GET | `/files/:id/download` | `tool:file:list` | 下载。**强制保存**，不做内联预览 |
+| POST | `/files` | `tool:file:upload` | multipart 上传，字段名 `file`，可带 `group` |
+| DELETE | `/files/:id` | `tool:file:delete` | 删除记录与磁盘文件 |
+| GET | `/jobs` | `tool:job:list` | 定时任务（来自代码注册表） |
+| PUT | `/jobs/:key` | `tool:job:edit` | 改 cron / 启停，**立即重新调度** |
+| POST | `/jobs/:key/run` | `tool:job:run` | 立即执行一次（异步，结果刷新列表看） |
+| GET | `/healthz` | — **(公开)** | 探活，会真实 Ping 数据库 |
+
+### 登录
 
 ```bash
-curl -X POST localhost:8080/api/v1/devices \
+curl -c cookie.txt -X POST localhost:8080/api/v1/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"name":"sensor-1","location":"lab","enabled":true}'
+  -d '{"username":"admin","password":"admin123"}'
 ```
-
-| 字段 | 校验 |
-| --- | --- |
-| `name` | 必填，2–64 字符 |
-| `location` | 必填 |
-| `enabled` | 可选，默认 `false` |
-
-成功 `200`，`data` 是新建的完整实体（`id` 与 `created_at` 由数据库生成后回填）：
 
 ```json
-{"code":0,"msg":"ok","data":{"id":1,"name":"sensor-1","location":"lab","enabled":true,"created_at":"2025-09-26T16:32:05Z"}}
+{"code":0,"msg":"ok","data":{
+  "user":{"id":1,"username":"admin","nickname":"管理员", ...},
+  "is_admin":true,
+  "perms":["system:menu:add", "..."],
+  "csrf_token":"Xce5DgS3...",
+  "expires_at":"2026-10-04T08:45:15Z",
+  "menus":[{"title_key":"menu.system","children":[...]}]
+}}
 ```
 
-### `GET /api/v1/devices`
+内置管理员（角色 `code='admin'`）的 `perms` 会返回**全部已声明的权限码**，
+所以前端只需要一种判断：`perms.includes(code)`。它的权限是隐式的、不落库，
+见 [../docs/schema.md](../docs/schema.md) §8.2。
 
-查询参数 `page`（默认 1，最小 1）、`page_size`（默认 20，范围 1–100，超出则回落 20）。
-按 `id` 倒序。
+### 删除有依赖的资源
 
-```json
-{"code":0,"msg":"ok","data":{"list":[],"total":0,"page":1,"page_size":20}}
-```
-
-空结果时 `list` 是 `[]`，不是 `null`。
-
-### `GET /api/v1/devices/:id`
-
-返回单个实体，不存在返回 `404` + `{"code":1,"msg":"error.notFound"}`。
-
-### `PATCH /api/v1/devices/:id`
-
-只支持改 `enabled`：
+不带 `?cascade=true` 时，若资源有子数据会返回 `409` 并携带影响面：
 
 ```bash
-curl -X PATCH localhost:8080/api/v1/devices/1 \
-  -H 'Content-Type: application/json' -d '{"enabled":false}'
+curl -b cookie.txt -X DELETE localhost:8080/api/v1/menus/1
 ```
-
-`enabled` 是**必填**的。字段用指针接收，因此 `{}` 会返回 `400` 而不是把 `enabled` 静默改成 `false`：
 
 ```json
-{"code":1,"msg":"error.validationFailed","errors":[{"field":"enabled","rule":"required"}]}
+{"code":1,"msg":"error.hasDependents",
+ "data":{"child_menus":3,"affected_roles":2}}
 ```
 
-### `DELETE /api/v1/devices/:id`
-
-```json
-{"code":0,"msg":"ok","data":{"id":1}}
-```
-
-不返回 `204`——所有接口统一走响应信封，前端不必为它特判空 body。
+前端收到它**不是弹错误提示，而是弹确认框**并把数字展示出来；用户确认后重发
+`DELETE .../menus/1?cascade=true`。各资源的影响面字段见
+[../docs/architecture.md](../docs/architecture.md) §3.4。
 
 ### 错误响应
 
 失败响应的 `msg` 是 **i18n 键**而非文案，文案由前端渲染。
 
-```json
-{"code":1,"msg":"error.validationFailed",
- "errors":[{"field":"name","rule":"min","param":"2"},
-           {"field":"location","rule":"required"}]}
-```
-
 | HTTP | `msg` |
 | --- | --- |
-| 400 | `error.validationFailed` / `error.malformedBody` / `error.invalidId` |
+| 400 | `error.validationFailed` / `error.malformedBody` / `error.invalidId` / `error.invalidParent` / `error.invalidPermCode` |
+| 401 | `error.unauthorized` / `error.badCredentials` |
+| 403 | `error.forbidden` / `error.protected` / `error.accountDisabled` / `error.cannotDeleteSelf` / `error.cannotKickSelf` / `error.csrfInvalid` |
 | 404 | `error.notFound` |
-| 413 | `error.bodyTooLarge` |
+| 409 | `error.hasDependents` / `error.lastAdmin` / `error.duplicate` |
+| 400 | `error.invalidJobCron` / `error.invalidFile` |
+| 413 | `error.bodyTooLarge` / `error.fileTooLarge` / `error.quotaExceeded` |
 | 429 | `error.tooManyRequests` |
 | 500 | `error.internal` |
 | 503 | `error.serviceUnavailable` |
+| 404 | `error.frontendDisabled`（**纯 API 模式**下访问非 API 路径，提示前端未部署） |
+
+后端**不会**返回 `error.network` 和 `error.backendUnreachable`——这两个是前端产生的
+（前者表示请求没有任何东西应答，后者表示有响应但不是本服务的信封格式）。
 
 内置限制：请求体上限 1 MiB，按 IP 限流 20 rps（突发 40）。
+审计日志批量落库，**最多有 2 秒延迟**（原因见 [../docs/architecture.md](../docs/architecture.md) §5.2）。
+保留期由 `APP_LOG_RETENTION_DAYS` 控制，默认 30 天。
 
 ## 数据库
 
@@ -212,8 +262,9 @@ internal/httpserver/               路由装配、静态资源托管 + SPA 兜�
 
 ## 尚未实现
 
-- 认证（session / CSRF）与鉴权（RBAC）
-- 用户 / 角色 / 菜单 / API 权限表
-- 操作日志
+- **登录失败锁定**：现在只记登录日志，不累计失败次数、不锁账号
+- **任务执行历史**：`sys_jobs` 上只存最近一次执行结果，没有历史表
+- **列表导出**：用户/角色/日志都没有导出接口
 
-`devices` 只是用于验证 CRUD、分页、错误契约与迁移链路的示例资源，不是业务功能。
+`devices` 示例资源已移除：在 fail-closed 的权限模型下，它要么污染生产权限清单，
+要么留下一个无权限的 CRUD 接口，两者都不该出现在正式版本里。

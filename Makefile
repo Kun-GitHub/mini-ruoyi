@@ -1,4 +1,4 @@
-.PHONY: help deps web build clean run dev-server dev-web
+.PHONY: help deps web build clean run test check test-e2e dev-server dev-web
 
 BIN := bin/mini-ruoyi
 
@@ -21,6 +21,22 @@ build: web ## 构建二进制到 bin/，并把前端产物放到 bin/web/
 
 run: build ## 构建后直接启动
 	cd bin && ./mini-ruoyi
+
+# -count=1 不是可选项：httpx / perm 里有几个用例会读取前端 i18n 字典，
+# 而 Go 的测试缓存不追踪测试运行期 os.ReadFile 打开的文件——不加这个标志，
+# 改了前端字典后 go test 会直接返回缓存里那个已经过期的 "ok"。
+test: ## 跑全部后端测试（-count=1，绕过对前端字典的过期缓存）
+	cd server && go test -count=1 ./...
+
+check: ## 提交前门禁：格式 + vet + 后端测试 + 前端类型检查
+	@cd server && files=$$(gofmt -l .); \
+		if [ -n "$$files" ]; then echo "以下文件未 gofmt: $$files"; exit 1; fi
+	cd server && go vet ./...
+	$(MAKE) test
+	cd web && npm run check
+
+test-e2e: build ## 浏览器端测试（会先构建，再用临时库起一个后端）
+	cd web && npx playwright test
 
 dev-server: ## 启动后端（仅 API，前端走 Vite dev server）
 	go run -C server ./cmd/server

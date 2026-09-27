@@ -10,7 +10,9 @@ server/
 ├── data.db                         # 随仓库分发的初始数据库
 ├── cmd/server/main.go              # 启动、依赖组装、优雅关闭
 └── internal/
-    ├── config/config.go            # 环境变量 → Config
+    ├── config/
+    │   ├── config.go               # 配置结构与加载（文件 + 环境变量）
+    │   └── config.example.yaml     # 带注释的配置样例（config.yaml 本身被 gitignore）
     ├── domain/                     # 实体 + 领域错误（最内层，不依赖任何包）
     │   └── device.go
     ├── httpx/response.go           # 统一响应信封、错误键、错误→HTTP 状态码映射
@@ -34,16 +36,20 @@ server/
 ```
 domain      →（不依赖任何内部包）
 httpx       → domain
+perm        →（不依赖任何内部包）
+auth        → domain, repository
 repository  → domain
-service     → domain, repository
-handler     → httpx, service
-middleware  → httpx
-httpserver  → handler, httpx, middleware
+service     → auth, domain, perm, repository
+handler     → domain, httpx, middleware, perm, service
+middleware  → auth, domain, httpx, perm, service
+httpserver  → handler, httpx, middleware, perm
 ```
 
 | 层 | 职责 | 禁止 |
 | --- | --- | --- |
-| `domain` | 实体定义、领域错误哨兵（`ErrNotFound`） | 依赖任何其他内部包 |
+| `domain` | 实体定义、领域错误哨兵（`ErrNotFound` / `ErrHasDependents` / `ErrDuplicate` 等） | 依赖任何其他内部包 |
+| `perm` | 权限码常量与分组，不查库 | 依赖任何其他内部包 |
+| `auth` | 密码哈希/校验、会话签发与解析 | 依赖 handler / service |
 | `httpx` | 响应信封、错误键、错误→状态码映射 | 依赖 handler / service / repository |
 | `repository` | 单表 SQL，行 ↔ 实体 | 包含业务规则、跨表事务编排 |
 | `service` | 业务规则、事务边界、分页归一化 | 依赖 `*gin.Context`、构造 HTTP 响应 |
@@ -253,16 +259,26 @@ DATETIME 能**直接扫进 `time.Time`**（驱动已做转换，无需 `_time_fo
 
 ## 8. 配置（`internal/config`）
 
-| 变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `APP_ADDR` | `:8080` | 监听地址 |
-| `APP_DB_PATH` | `data.db` | 相对**进程工作目录** |
-| `APP_WEB_DIR` | 二进制同级 `web/`，不存在则 `./web` | 前端产物目录 |
-| `APP_ENV` | `prod` | `dev` → `gin.DebugMode` |
+加载顺序：**内置默认值 → 配置文件 → 环境变量**，然后校验。
+详见 [architecture.md](architecture.md) §5.5 里的取舍说明。
 
-`APP_WEB_DIR` 的默认值跟二进制走（`os.Executable()`），这样部署时二进制和 `web/` 放一起即可，
-不依赖 systemd 的 `WorkingDirectory`；目录不存在时回落到 CWD 相对路径，
-覆盖 `go run` 的场景（`go run` 会把二进制放进临时目录，同级不会有 `web/`）。
+配置文件默认在 `config/config.yaml`（可用 `APP_CONFIG` 改），
+**不存在也不算错**——那样才能 clone 下来直接跑。
+解析用 `KnownFields(true)`，写错字段名会直接报错而不是静默忽略。
+
+**完整的环境变量与配置项清单在 [../server/README.md](../server/README.md)**——
+不在这里再抄一份，两份表必然漂移。
+
+两处路径解析规则值得单独说明，它们**故意不同**：
+
+| 配置项 | 解析规则 | 为什么 |
+| --- | --- | --- |
+| `database.path` | 相对**进程工作目录** | 数据库常放在数据盘或挂载卷上，位置由部署决定，不该跟着二进制走 |
+| `web.dir`（留空时自动查找） | 二进制同级 `web/` → `./web` → `../bin/web` → `bin/web` | 前端产物天然跟二进制一起分发。多候选是为了覆盖 `go run` 与 IDE 启动——那时二进制在临时目录里，同级根本没有 `web/` |
+
+前端目录找不到时会降级成纯 API 模式，并打印一句指明怎么修的提示。
+早期版本只找「二进制同级」那一个位置，找不到就静默降级——表现为
+「打开 :8080 看到一句 JSON 404」，很难联想到是前端目录的问题。
 
 ## 9. 测试
 
@@ -274,12 +290,38 @@ go test ./... -run TestNewDB      # 单个
 | 文件 | 覆盖 |
 | --- | --- |
 | `repository/sqlite_test.go` | **每条连接的 PRAGMA 都生效**（防 A1 回归）、WAL 已启用 |
-| `repository/migrate_test.go` | 迁移幂等；在旧版遗留库（有表无迁移记录）上升级不丢数据 |
+| `repository/migrate_test.go` | 迁移幂等；在旧版遗留库（有表无迁移记录）上升级不丢数据；**种子密码哈希能通过 bcrypt 校验**；**结构校验能发现「记录说已应用、表却不在」** |
 | `repository/device_repository_test.go` | `created_at` 回填、空列表非 nil、分页、`ErrNotFound` |
+| `service/rbac_test.go` | 删除影响面（含后代菜单的授权）、级联删除、环引用拦截、四条删除守卫 |
+| `perm/perm_test.go` | 分组覆盖与去重、键名推导约定、未知权限码检出、前端字典覆盖 |
+| `service/authz_service.go` | 身份解析：内置管理员铺满全部权限码，其他用户查角色授权 |
+| `repository/session_repository_test.go` | **datetime 存储格式**、时间往返、过期清理、按用户踢人、删用户级联 |
+| `httpx/response_test.go` | 错误键唯一且命名规范、前端字典覆盖 |
 | `handler/device_handler_test.go` | `PATCH {}` 不能静默改 `enabled`、空列表 `[]`、snake_case 字段名 |
 | `httpserver/static_test.go` | SPA 兜底、缓存头、API 404 返回 JSON、目录不完整时启动失败 |
-| `httpserver/router_test.go` | 响应信封、错误键、字段级校验数组、413、404 映射 |
+| `httpserver/router_test.go` | **公开端点集合的 fail-closed 断言**、**装配遗漏检测**、未登录一律 401、登录/登出全链路、停用用户立刻失效、响应信封、错误键、字段级校验数组、413/404 映射 |
+| `httpserver/rbac_api_test.go` | 权限隔离（有码放行、无码 403）、授权按码精确生效、未知权限码拒绝、409 影响面与 cascade 确认、四条删除守卫、唯一冲突带字段名、重置密码踢会话 |
 | `middleware/middleware_test.go` | 限流按 IP、伪造 `X-Forwarded-For` 无效、请求体上限、缓存头只匹配前缀 |
+| `httpserver/router_test.go`（panic 用例） | **panic 也要返回信封**——空 body 的 500 会让前端把「后端出错」误判成「后端没起来」 |
+
+### ⚠️ 两个跨语言用例必须用 `-count=1`
+
+`perm/perm_test.go` 与 `httpx/response_test.go` 里各有一个用例会去读前端的
+i18n 字典（`web/src/lib/i18n/*.ts`），以确认「后端出的键」与「前端的文案」没跑偏。
+
+**Go 的测试缓存不会追踪测试运行期 `os.ReadFile` 打开的文件**，而这两个用例的输入恰好
+在包目录之外。不加 `-count=1` 时，改了前端字典再跑 `go test` 会拿到缓存里那个已经
+过期的 `ok`——实测确认过：
+
+```
+$ go test ./internal/perm/        # 删掉字典里的一个键之后
+ok  mini-ruoyi/internal/perm  (cached)     ← 假的通过
+$ go test ./internal/perm/ -count=1
+--- FAIL: TestFrontendDictCoversPermKeys
+    缺少文案键 "perm.system.user.resetPwd"
+```
+
+CI 是冷缓存所以不受影响；本地请用 `make test` 或 `make check`。
 
 写测试时注意：**gin 的校验器是全局单例**，`TestMain` 之外不要依赖注册顺序；
 测试里的 `newXxxFixture` 记得跑 `repository.Migrate`，否则表不存在会得到一堆 500。

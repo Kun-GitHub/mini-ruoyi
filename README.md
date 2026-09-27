@@ -13,6 +13,8 @@
 - **语言中立的 API**：后端只输出稳定的 i18n 键，文案由前端按 `zh-CN` / `en-US` 渲染
 - **前端 i18n**：手写约 110 行，零运行时依赖，字典缺键直接编译报错
 - **面向低配机器**：按 IP 限流 20 rps（突发 40）、请求体上限 1 MiB、SQLite 连接池收敛到 4 条、WAL + `synchronous=NORMAL`
+- **fail-closed 的权限模型**：注册业务端点必须声明权限码（否则启动 panic），
+  未登录一律 401，缺权限一律 403；公开端点集合由测试钉死
 
 ## 快速开始
 
@@ -71,25 +73,99 @@ Environment=GOMEMLIMIT=700MiB
 WantedBy=multi-user.target
 ```
 
-前端目录默认取「二进制同级目录下的 `web/`」，所以把二进制和 `web/` 放一起即可，不依赖 `WorkingDirectory`。
+前端目录按以下顺序查找，取第一个含 `index.html` 的：
+
+1. 二进制同级目录下的 `web/`（部署形态）
+2. `./web`（工作目录就是仓库根）
+3. `../bin/web`、`bin/web`（**用 IDE 或 `go run` 启动时的常见情况**）
+
+也可以用 `APP_WEB_DIR` 显式指定。
+
+> ⚠️ **用 GoLand / VS Code 直接运行 `cmd/server` 时**：二进制在临时目录、工作目录是 `server/`，
+> 早期版本只找「二进制同级」会找不到前端，然后**静默降级成纯 API 模式**——
+> 表现为「打开 :8080 看到一句 `{"code":1,"msg":"error.notFound"}`」。
+> 现在会命中 `../bin/web`；若仍未命中，日志会明确告诉你执行 `make build` 或设置 `APP_WEB_DIR`。
 
 **更新前端不需要重启后端**：重新执行 `make web`，把 `dist/` 内容同步到服务器的 `web/` 目录，用户刷新页面就能拿到新版本。
 （`index.html` 响应头是 `no-cache`，`assets/*` 是 `immutable` + 内容哈希文件名，两者配合才能做到刷新即最新。）
 
+## 部署形态
+
+前端是纯静态文件，谁托管都行。后端在 `web/` 不存在时会**降级成纯 API 模式**，
+因此「Go 直接托管」「Vite 本地调试」「nginx 托管前端」三种都能跑，
+只是后两者需要额外配置。详见 [docs/architecture.md](docs/architecture.md) §5.1。
+
 ## 配置
 
-全部通过环境变量，无配置文件。
+**配置文件 + 环境变量**，优先级 **环境变量 > 配置文件 > 内置默认值**。
+环境变量优先是为了让 systemd / 容器覆盖单个值，而不必去改文件。
+**没有配置文件也能跑**——所有项都有默认值。
 
-| 变量 | 默认值 | 说明 |
+```bash
+cp server/config/config.example.yaml server/config/config.yaml   # 按需修改，可选
+```
+
+`config.yaml` 在 `.gitignore` 里（含监听地址、代理地址这类部署相关信息）；
+可提交的样例是 `server/config/config.example.yaml`。
+
+```yaml
+server:
+  addr: ":8080"
+  env: prod                          # dev 时用 gin 调试模式
+  secure_cookie: false               # 前面有 TLS 终止层时必须 true
+  trusted_proxies: []                # nginx 前置时必须填代理地址
+  rate_limit: { rps: 20, burst: 40 } # 按 IP
+
+database:
+  path: data.db                      # 相对进程工作目录
+
+web:
+  dir: ""                            # 留空 = 自动查找前端产物目录
+
+upload:
+  dir: uploads
+  max_mb: 20                         # 单文件上限
+  quota_mb: 512                      # 总容量上限，不能小于 max_mb
+
+log:
+  retention_days: 30                 # 操作日志与登录日志保留天数
+```
+
+**配置错了会拒绝启动**并指出具体位置，不会静默用默认值：
+
+```
+加载配置: 解析配置文件 config/config.yaml: field max_size not found in type config.Upload
+加载配置: 环境变量取值非法: APP_UPLOAD_MAX_MB="二十"
+加载配置: upload.quota_mb（10）不能小于 upload.max_mb（100），否则一个文件都传不上去
+```
+
+启动时会打印一行生效配置摘要（路径一律是绝对路径，「数据在哪」「文件传到哪」一眼可见）：
+
+```
+监听 :8080（prod）| 数据库 /opt/mr/data.db | 前端 /opt/mr/web | 上传 /opt/mr/uploads
+（单文件 20 MiB / 共 512 MiB）| 日志保留 30 天 | 可信代理 127.0.0.1
+```
+
+### 环境变量
+
+全部可选，用于覆盖配置文件里的同名项。
+
+| 变量 | 默认值 | 对应配置项 |
 | --- | --- | --- |
-| `APP_ADDR` | `:8080` | HTTP 监听地址 |
-| `APP_DB_PATH` | `data.db` | SQLite 文件路径，相对**进程工作目录** |
-| `APP_WEB_DIR` | 二进制同级 `web/`，不存在时回落到 `./web` | 前端产物目录 |
-| `APP_ENV` | `prod` | 设为 `dev` 时使用 `gin.DebugMode`，输出路由表与警告 |
-| `GOMEMLIMIT` | 无 | Go 1.19+ 堆软上限，1G 机器建议 `700MiB` |
-
-`APP_DB_PATH` 相对工作目录、`APP_WEB_DIR` 默认跟二进制走——两者解析规则不同是有意的：
-数据库常放在数据盘或挂载卷，而前端产物天然跟二进制一起分发。
+| `APP_CONFIG` | `config/config.yaml` | 配置文件路径本身 |
+| `APP_ADDR` | `:8080` | `server.addr` |
+| `APP_ENV` | `prod` | `server.env`（`dev` 时用 gin 调试模式） |
+| `APP_SECURE_COOKIE` | `false` | `server.secure_cookie` |
+| `APP_TRUSTED_PROXIES` | 空（不信任任何代理） | `server.trusted_proxies`（逗号分隔） |
+| `APP_RATE_LIMIT_RPS` | `20` | `server.rate_limit.rps` |
+| `APP_RATE_LIMIT_BURST` | `40` | `server.rate_limit.burst` |
+| `APP_DB_PATH` | `data.db` | `database.path` |
+| `APP_WEB_DIR` | 自动查找 | `web.dir` |
+| `APP_UPLOAD_DIR` | `uploads` | `upload.dir` |
+| `APP_UPLOAD_MAX_MB` | `20` | `upload.max_mb` |
+| `APP_UPLOAD_QUOTA_MB` | `512` | `upload.quota_mb` |
+| `APP_LOG_RETENTION_DAYS` | `30` | `log.retention_days` |
+| `GOMEMLIMIT` | 无 | Go 堆软上限，1G 机器建议 `700MiB` |
 
 ## 目录结构
 
@@ -110,6 +186,9 @@ mini-ruoyi/
 
 ```
 make help        显示所有命令
+make check       提交前门禁：gofmt + go vet + 后端测试 + 前端类型检查
+make test        后端测试（强制 -count=1，原因见 docs/architecture-server.md）
+make test-e2e    浏览器端测试（会先构建，再用临时库起一个后端）
 make deps        安装前端依赖
 make web         构建前端到 web/dist
 make build       构建二进制 + 前端产物到 bin/
@@ -123,6 +202,7 @@ make clean       清理 bin/ 和 web/dist
 
 | 文档 | 内容 |
 | --- | --- |
+| [docs/schema.md](docs/schema.md) | **数据库 Schema**：表与字段定义、DDL、权限模型、字段取舍决策记录 |
 | [docs/architecture.md](docs/architecture.md) | 整体架构：进程模型、前后端契约、关键决策与权衡 |
 | [docs/architecture-server.md](docs/architecture-server.md) | 后端架构：分层、中间件链、响应契约、数据层、迁移 |
 | [docs/architecture-web.md](docs/architecture-web.md) | 前端架构：响应式、i18n、与后端的集成方式 |
@@ -134,11 +214,21 @@ make clean       清理 bin/ 和 web/dist
 **已实现**：分层骨架、统一响应契约、SQLite 连接与迁移、静态资源托管、按 IP 限流、
 前端工具链与 i18n、`devices` 示例资源的完整 CRUD + 分页。
 
-**尚未实现**：认证与鉴权（session / CSRF）、用户 / 角色 / 菜单 / API 权限（RBAC）表、
-动态菜单与动态路由、前端业务页面。
+**后端已完成**：认证（session + CSRF）、RBAC 鉴权（23 个端点，权限码在代码里声明并启动校验）、
+用户 / 角色 / 菜单 / 权限码的完整 CRUD、删除确认与守卫、版本化迁移。
+表结构见 [docs/schema.md](docs/schema.md)，接口见 [server/README.md](server/README.md)。
 
-`devices` 只是一个用于验证 CRUD、分页、错误契约和迁移链路的示例资源，不是业务功能。
-详见 [docs/architecture.md](docs/architecture.md)。
+含**系统监控**（在线会话可强制下线、登录日志、操作日志）与**系统工具**
+（文件管理、定时任务）。日志保留 30 天可配，文件上传有单文件与总量双重限制。
+
+**尚未实现**：
+
+- 多标签页的**状态持久化**（刷新后只保留当前页的标签）
+- 列表导出（CSV / Excel）
+- 任务执行历史（现在 job 行上只存最近一次结果）
+- 登录失败锁定
+
+详见 [docs/architecture.md](docs/architecture.md) 的待办清单。
 
 ## 许可证
 

@@ -1,62 +1,36 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { Badge } from '$lib/components/ui/badge'
-  import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '$lib/components/ui/card'
-  import { getLocale, locales, setLocale, t, type Locale } from '$lib/i18n/index.svelte'
 
-  let backend: 'checking' | 'ok' | 'unreachable' = $state('checking')
+  import AppShell from '$lib/components/app-shell.svelte'
+  import ConfirmHost from '$lib/components/confirm-host.svelte'
+  import LoginForm from '$lib/components/login-form.svelte'
+  import Toaster from '$lib/components/toaster.svelte'
+  import { t } from '$lib/i18n/index.svelte'
+  import { replaceTo } from '$lib/router.svelte'
+  import { bootstrap, session } from '$lib/stores/session.svelte'
 
-  onMount(async () => {
-    try {
-      // 只判断连通性：这里不依赖响应信封的内容
-      const res = await fetch('/healthz')
-      backend = res.ok ? 'ok' : 'unreachable'
-    } catch {
-      backend = 'unreachable'
-    }
+  // 刷新页面后 cookie 还在，但 CSRF 令牌只在内存里，所以必须重新问一次 /auth/me
+  onMount(() => {
+    void bootstrap()
   })
 
-  const statusKeys = {
-    checking: 'home.status.checking',
-    ok: 'home.status.ok',
-    unreachable: 'home.status.unreachable',
-  } as const
+  // 未登录时把地址栏也归到 /login，避免分享出去的深链接看起来像是能直接打开
+  $effect(() => {
+    if (session.phase === 'anonymous') replaceTo('/login')
+  })
 </script>
 
-<main class="mx-auto flex min-h-svh max-w-3xl flex-col justify-center gap-6 p-6">
-  <Card>
-    <CardHeader>
-      <div class="flex items-start justify-between gap-4">
-        <div>
-          <CardTitle>{t('app.name')}</CardTitle>
-          <CardDescription>{t('app.description')}</CardDescription>
-        </div>
-        <div class="flex items-center gap-2">
-          <span class="text-xs text-muted-foreground">{t('app.localeLabel')}</span>
-          <select
-            class="h-8 rounded-md border bg-background px-2 text-sm"
-            value={getLocale()}
-            onchange={(e) => setLocale((e.currentTarget as HTMLSelectElement).value as Locale)}
-          >
-            {#each Object.entries(locales) as [code, label] (code)}
-              <option value={code}>{label}</option>
-            {/each}
-          </select>
-        </div>
-      </div>
-    </CardHeader>
-    <CardContent class="flex flex-col gap-3 text-sm">
-      <div class="flex items-center gap-2">
-        <span class="text-muted-foreground">{t('home.backendStatus')}</span>
-        {#if backend === 'ok'}
-          <Badge>{t(statusKeys[backend])}</Badge>
-        {:else if backend === 'checking'}
-          <Badge variant="secondary">{t(statusKeys[backend])}</Badge>
-        {:else}
-          <Badge variant="destructive">{t(statusKeys[backend])}</Badge>
-        {/if}
-      </div>
-      <p class="text-muted-foreground">{t('home.hint')}</p>
-    </CardContent>
-  </Card>
-</main>
+{#if session.phase === 'booting'}
+  <div class="flex min-h-svh items-center justify-center text-sm text-muted-foreground">
+    {t('common.loading')}
+  </div>
+{:else if session.phase === 'anonymous'}
+  <LoginForm />
+{:else}
+  <AppShell />
+{/if}
+
+<!-- 通知与确认框挂在最外层：它们不受登录状态影响，
+     登录失败的通知也要能显示 -->
+<Toaster />
+<ConfirmHost />

@@ -76,8 +76,19 @@ func RateLimit(rps float64, burst int, idleTTL time.Duration) gin.HandlerFunc {
 }
 
 // BodyLimit 限制请求体大小。没有它，一个超大 body 就能把 1G 内存的机器打爆。
-func BodyLimit(maxBytes int64) gin.HandlerFunc {
+//
+// skipPrefixes 用于放行那些**自己控制上限**的路由：文件上传的体量远超普通
+// JSON 请求，而且它需要给出「文件太大」而不是「请求太大」。
+// 这里必须放行而不是「用一个更大的值再包一层」——
+// MaxBytesReader 是可以嵌套的，内层那个小的会先报错。
+func BodyLimit(maxBytes int64, skipPrefixes ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		for _, prefix := range skipPrefixes {
+			if strings.HasPrefix(c.Request.URL.Path, prefix) {
+				c.Next()
+				return
+			}
+		}
 		if c.Request.Body != nil {
 			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
 		}

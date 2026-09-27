@@ -18,7 +18,11 @@ npm run dev          # Vite dev server :5173
 npm run build        # 生产构建到 dist/
 npm run preview      # 本地预览构建产物
 npm run check        # svelte-check + tsc，提交前必跑
+npx playwright test  # 浏览器端测试（需先 make build）
 ```
+
+`npx playwright test` 需要能访问 `bin/mini-ruoyi`，所以从仓库根跑 `make test-e2e` 更省事——
+它会先构建再用临时库起后端。首次运行需要 `npx playwright install chromium`。
 
 从仓库根目录操作更省事：
 
@@ -36,6 +40,14 @@ dist/assets/*        由后端在 /assets/ 前缀返回，带 immutable 长缓�
 ```
 
 ## 与后端联调
+
+⚠️ **只起前端是不行的**：Vite 只是把 `/api` 代理到 `:8080`，后端没起时
+代理返回 `502` + 空 body，界面会提示「无法连接后端服务，请确认服务已启动」。
+（这个提示是有意设计的——早期版本会报 `error.internal`，让人误以为后端出了 bug。）
+
+⚠️ **用 GoLand / VS Code 直接跑 `cmd/server` 也可以**，但要知道：
+工作目录是 `server/`、数据库是 `server/data.db`。前端目录现在会自动找到
+`../bin/web`（所以要先 `make build` 一次）。
 
 ```bash
 # 终端 1
@@ -145,9 +157,6 @@ npx shadcn-svelte@latest add dialog table select
 
 | 项 | 说明 |
 | --- | --- |
-| API 客户端 | `src/lib/api/client.ts`：统一解信封、抛 `ApiError`、401 拦截、CSRF 头 |
-| 路由 | 动态路由：后端菜单树 → `import.meta.glob('../pages/**/*.svelte')` |
-| 布局 | 侧边栏 + 顶栏 + 多标签页 |
-| 登录页 | 依赖后端认证方案落地 |
-
-目前 `App.svelte` 是唯一的页面，只调 `/healthz` 验证前后端链路，**没有任何业务 API 调用**。
+| 标签页持久化 | 标签在内存里，刷新后只恢复到当前路径那一个 |
+| 列表导出 | 用户/角色/日志都没有导出入口 |
+| 通用组件 | 表格、分页、筛选栏目前在页面里各写一遍，够用但可抽 |

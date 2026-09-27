@@ -58,3 +58,13 @@ export function t(key: MessageKey, params?: Record<string, string | number>): st
 export function hasMessage(key: string): key is MessageKey {
   return key in zhCN
 }
+
+/**
+ * 渲染来自后端的键。
+ *
+ * 后端返回的 msg 是 i18n 键，但类型上只是 string。查不到时原样返回键名——
+ * 这比返回空字符串好：界面会显示 error.notFound，一眼就能看出是漏登记了。
+ */
+export function tKey(key: string, params?: Record<string, string | number>): string {
+  return hasMessage(key) ? t(key, params) : key
+}

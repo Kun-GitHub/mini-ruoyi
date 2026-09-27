@@ -100,7 +100,7 @@ func TestImmutableAssetsOnlyMatchesPrefix(t *testing.T) {
 	r := gin.New()
 	r.Use(ImmutableAssets("/assets/"))
 	r.GET("/assets/:file", func(c *gin.Context) { c.Status(http.StatusOK) })
-	r.GET("/api/v1/devices", func(c *gin.Context) { c.Status(http.StatusOK) })
+	r.GET("/api/v1/anything", func(c *gin.Context) { c.Status(http.StatusOK) })
 
 	req := httptest.NewRequest(http.MethodGet, "/assets/app-abc.js", nil)
 	w := httptest.NewRecorder()
@@ -109,7 +109,7 @@ func TestImmutableAssetsOnlyMatchesPrefix(t *testing.T) {
 		t.Errorf("asset 的 Cache-Control = %q，期望含 immutable", cc)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/api/v1/devices", nil)
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/anything", nil)
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if cc := w.Header().Get("Cache-Control"); cc != "" {

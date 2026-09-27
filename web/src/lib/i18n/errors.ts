@@ -11,11 +11,25 @@ export type FieldError = {
  * 已知字段的标签。后端新增字段而前端还没补标签时回落到字段名本身，
  * 不会显示空白。
  */
+/** 后端可能出现在 errors[].field 里的字段名，与 docs/schema.md 的列名一一对应。 */
 const fieldLabelKeys = {
   id: 'field.id',
   name: 'field.name',
-  location: 'field.location',
-  enabled: 'field.enabled',
+  username: 'field.username',
+  password: 'field.password',
+  nickname: 'field.nickname',
+  mobile: 'field.mobile',
+  email: 'field.email',
+  status: 'field.status',
+  code: 'field.code',
+  remark: 'field.remark',
+  parent_id: 'field.parent_id',
+  sort: 'field.sort',
+  menu_type: 'field.menu_type',
+  title_key: 'field.title_key',
+  path: 'field.path',
+  component: 'field.component',
+  icon: 'field.icon',
 } satisfies Record<string, MessageKey>
 
 export function fieldLabel(field: string): string {

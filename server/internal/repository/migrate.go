@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,24 +42,30 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	}
 	sort.Strings(names) // 文件名用零填充数字前缀，字典序即版本序
 
+	var bodies []string
 	for _, name := range names {
 		base := path.Base(name)
 		version, err := parseMigrationVersion(base)
 		if err != nil {
 			return err
 		}
-		if applied[version] {
-			continue
-		}
+
 		body, err := migrationFS.ReadFile(name)
 		if err != nil {
 			return err
+		}
+		bodies = append(bodies, string(body))
+
+		if applied[version] {
+			continue
 		}
 		if err := applyMigration(ctx, db, version, base, string(body)); err != nil {
 			return err
 		}
 	}
-	return nil
+
+	// 结构校验放在最后：只信 schema_migrations 是不够的，见 verifySchema 的说明
+	return verifySchema(ctx, db, expectedTables(bodies))
 }
 
 func appliedVersions(ctx context.Context, db *sql.DB) (map[int64]bool, error) {
@@ -110,4 +117,60 @@ func applyMigration(ctx context.Context, db *sql.DB, version int64, name, body s
 		return fmt.Errorf("record migration %s: %w", name, err)
 	}
 	return tx.Commit()
+}
+
+var createTableRe = regexp.MustCompile(`(?is)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-zA-Z_][a-zA-Z0-9_]*)`)
+
+// expectedTables 从所有迁移文件里提取应该存在的表名。
+func expectedTables(bodies []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, body := range bodies {
+		for _, m := range createTableRe.FindAllStringSubmatch(body, -1) {
+			name := strings.ToLower(m[1])
+			if name == "schema_migrations" || seen[name] {
+				continue
+			}
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// verifySchema 确认迁移文件声明过的表都真实存在，缺失则报错。
+//
+// 为什么必须在启动时查：schema_migrations 只说明「迁移跑过」，不说明「表还在」。
+// 库被外部改过的情形都真实存在——手工删了表、从半途中断的备份恢复、
+// 拷来一个不完整的文件。这时版本号说「已应用」，迁移就不再执行，
+// 而之后**每个**用到该表的接口都会返回 error.internal，
+// 日志里只有一句 "no such table: xxx"，没人会想到去看迁移记录。
+//
+// 直接拒绝启动并给出修法，比让它在运行期零散地 500 好得多。
+func verifySchema(ctx context.Context, db *sql.DB, want []string) error {
+	var missing []string
+	for _, table := range want {
+		var exists bool
+		err := db.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)`,
+			table).Scan(&exists)
+		if err != nil {
+			return fmt.Errorf("检查表 %s 是否存在: %w", table, err)
+		}
+		if !exists {
+			missing = append(missing, table)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"数据库结构不完整：迁移记录显示已应用，但以下表不存在：%s\n"+
+			"  可能原因：库被手工改过、从半途中断的备份恢复、或拷贝了不完整的文件。\n"+
+			"  修复方式：\n"+
+			"    - 全新部署（没有要保留的数据）：删除数据库文件后重启，会自动重建\n"+
+			"    - 已有数据：从备份恢复，或手工补齐缺失的表",
+		strings.Join(missing, ", "))
 }
