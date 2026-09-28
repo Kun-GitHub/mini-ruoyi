@@ -157,6 +157,7 @@ rsync -a --delete bin/web/ /opt/mini-ruoyi/web/
 | 接口返回 500 | `journalctl -u mini-ruoyi`。500 一律带完整错误进日志，客户端只拿到一个键 |
 | 所有人一起收到 429 | 前面有代理但没设 `APP_TRUSTED_PROXIES`，限流退化成全局了 |
 | 进程莫名重启 | `dmesg \| grep -i oom`。多半是没设 `GOMEMLIMIT` |
+| 服务监控页上 CPU / 内存显示「本平台读不到该指标」 | 正常。这两个指标读 `/proc`，只在 Linux 上有。磁盘和进程指标各平台都能读 |
 | 登录后立刻被登出 | `APP_SECURE_COOKIE=true` 但在 HTTP 上访问，浏览器不会回传 cookie |
 
 运行时状态可以直接看「系统监控」页面（CPU / 内存 / 磁盘 / Go 进程），

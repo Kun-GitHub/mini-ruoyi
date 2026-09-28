@@ -28,12 +28,21 @@ run: build ## 构建后直接启动
 test: ## 跑全部后端测试（-count=1，绕过对前端字典的过期缓存）
 	cd server && go test -count=1 ./...
 
-check: ## 提交前门禁：格式 + vet + 后端测试 + 前端类型检查
+check: ## 提交前门禁：格式 + vet + 交叉编译 + 后端测试 + 前端类型检查
 	@cd server && files=$$(gofmt -l .); \
 		if [ -n "$$files" ]; then echo "以下文件未 gofmt: $$files"; exit 1; fi
 	cd server && go vet ./...
+	$(MAKE) check-cross
 	$(MAKE) test
 	cd web && npm run check
+
+# 目标平台是 Linux，但开发常在 macOS/Windows —— 平台相关的代码
+# （比如 syscall.Statfs 只有 Unix 有）在本机编译得过并不代表在别处也能过。
+# 这条专门防「用户在自己机器上一编译就报 undefined」。
+check-cross:
+	@cd server && for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do \
+		GOOS=$${target%/*} GOARCH=$${target#*/} go build ./... || exit 1; \
+	done && echo "交叉编译通过（linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64）"
 
 test-e2e: build ## 浏览器端测试（会先构建，再用临时库起一个后端）
 	cd web && npx playwright test

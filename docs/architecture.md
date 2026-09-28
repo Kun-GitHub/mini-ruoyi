@@ -346,10 +346,17 @@ Playwright 定位器的自动重试只重新求值 DOM，不会重新发请求�
 - 需要的字段只有十来个，`/proc/stat`、`/proc/meminfo`、`/proc/self/statm` 各解析一行就够
 - 这类库为了跨平台会带一大堆平台实现，而本项目的部署目标是 Linux
 
-**代价是 macOS 上读不到 CPU 与内存**（没有 `/proc`）。处理方式是每个指标都带
+**代价是 macOS 与 Windows 上读不到 CPU 与内存**（没有 `/proc`）。处理方式是每个指标都带
 `available` 标记，读不到就返回 `available: false`，让界面明说「本平台读不到该指标」。
 
 这一条是刻意的：**返回 0 会被当成「负载很低」，比没有更糟**。
+
+磁盘是唯一必须按平台分文件的部分：`syscall.Statfs` 只有 Unix 有，
+Windows 走 kernel32 的 `GetDiskFreeSpaceExW`（同样是标准库，不加依赖）。
+见 `internal/system/disk_unix.go` 与 `disk_windows.go`。
+
+> 平台相关的代码在本机能编译**不代表**在别处也能编译。
+> `make check-cross` 会对 5 个平台各编译一遍，专门防这一类错误。
 
 两个实现细节：
 
@@ -358,6 +365,13 @@ Playwright 定位器的自动重试只重新求值 DOM，不会重新发请求�
 | CPU 使用率取两次 `/proc/stat` 的差值（间隔 200ms） | 累计值只能算出「开机至今的平均值」，对排查当前状况没有意义 |
 | 内存用 `MemAvailable` 而不是 `MemFree` | `MemFree` 不含可回收的页缓存，照它判断会以为内存快满了 |
 | 进程 RSS 读 `/proc/self/statm` 而不是 `syscall.Getrusage` | 后者的 `Maxrss` 在 Linux 是 KB、在 macOS 是字节，同一字段两种单位早晚算错 |
+| `/proc/stat` 只取前 8 个字段 | 内核已把 `guest`/`guest_nice` 计进 `user`/`nice`，全加会算两遍，使用率偏高 |
+| `/proc/meminfo` 只认带 `kB` 单位的行 | 忽略单位会把 `1000 MB` 当成 `1000 kB`，差 1000 倍 |
+| `MemAvailable` 缺失时报「不可用」而不是当作 0 | 当作 0 会算出「100% 已用」，是个假告警 |
+
+这些解析逻辑只在 Linux 上跑，而开发机通常是 macOS，所以
+`internal/system/system_test.go` 用**真实的 `/proc` 内容**做样本——
+光靠「在 Linux 上编译通过」验证不了任何解析对不对。
 
 ## 6. 错误键清单
 

@@ -175,7 +175,7 @@ mini-ruoyi/
 
 ```
 make help        显示所有命令
-make check       提交前门禁：gofmt + go vet + 后端测试 + 前端类型检查
+make check       提交前门禁：gofmt + go vet + 交叉编译 + 后端测试 + 前端类型检查
 make test        后端测试（强制 -count=1，原因见 docs/architecture-server.md）
 make test-e2e    浏览器端测试（会先构建，再用临时库起一个后端）
 make deps        安装前端依赖
