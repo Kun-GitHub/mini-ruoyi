@@ -51,11 +51,14 @@ export const zhCN = {
   'field.name': '名称',
   'field.username': '用户名',
   'field.password': '密码',
+  'field.old_password': '原密码',
+  'field.new_password': '新密码',
   'field.nickname': '昵称',
   'field.mobile': '手机号',
   'field.email': '邮箱',
   'field.status': '状态',
   'field.code': '角色编码',
+  'field.role_ids': '角色',
   'field.remark': '备注',
   'field.parent_id': '上级',
   'field.sort': '排序',
@@ -64,6 +67,7 @@ export const zhCN = {
   'field.path': '路由路径',
   'field.component': '页面组件',
   'field.icon': '图标',
+  'field.cron': '执行表达式',
   'field.id': 'ID',
 
   // 菜单标题。sys_menus.title_key 存的就是这批键（见 docs/schema.md）。

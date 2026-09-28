@@ -38,29 +38,31 @@ web/
 ├── index.html                  # Vite 入口，lang="zh-CN"
 ├── vite.config.ts              # 插件、别名、构建产物布局、dev 代理
 ├── tsconfig.json               # 含 $lib 路径别名（shadcn CLI 读这里）
+├── e2e/                        # Playwright 用例 + server.mjs（用临时库起后端）
 └── src/
     ├── main.ts                 # mount + vite:preloadError 处理
     ├── app.css                 # Tailwind 入口 + shadcn 主题变量（由 CLI 生成）
     ├── App.svelte              # 按会话状态在 启动中 / 登录页 / 应用外壳 之间切换
     ├── pages/                  # 业务页面，路径与菜单的 component 字段一一对应
-    │   └── system/
-    │       ├── users.svelte
-    │       ├── roles.svelte
-    │       ├── menus.svelte
-    │       └── apis.svelte     # 只读：权限码 ↔ 接口（为什么不只读见 schema.md §8.4）
+    │   ├── profile.svelte      # 个人中心：不走菜单，见 §5.6「内置路由」
+    │   ├── system/             # users / roles / menus / apis.svelte
+    │   │   └── apis.svelte     # 只读：权限码 ↔ 接口（为什么不只读见 schema.md §8.4）
+    │   ├── monitor/            # system（CPU/内存/磁盘）/ sessions / loginlogs / operlogs
+    │   └── tool/               # files（上传下载）/ jobs（定时任务）
     └── lib/
         ├── api/
         │   ├── client.ts       # 信封解包、ApiError、CSRF 注入、401 回调
         │   ├── types.ts        # 与后端 DTO 一一对应的类型
         │   └── delete.ts       # 「409 → 确认框 → cascade 重发」的封装
         ├── components/
-        │   ├── app-shell.svelte    # 侧边栏 + 顶栏 + 动态页面渲染
+        │   ├── app-shell.svelte    # 侧边栏 + 标签栏 + 所有标签页同时渲染
         │   ├── confirm-host.svelte # 全局确认框
         │   ├── toaster.svelte      # 全局通知
         │   ├── login-form.svelte
-        │   └── ui/                 # shadcn-svelte 组件
+        │   ├── metric-bar.svelte · metric-row.svelte   # 监控页的指标条
+        │   └── ui/                 # shadcn-svelte 组件（badge / button / card / dialog / input / label / native-select / separator / table）
         ├── i18n/               # 见 §4
-        ├── stores/             # session / notify / confirm（都是 .svelte.ts）
+        ├── stores/             # session / tabs / notify / confirm（都是 .svelte.ts）
         ├── router.svelte.ts    # 极简路由 + 菜单驱动的页面解析
         └── utils.ts            # cn() 与 Svelte 组件类型工具（由 CLI 生成）
 ```
@@ -90,14 +92,14 @@ web/
 
 ## 4. i18n
 
-手写实现，约 110 行，**零运行时依赖**。
+手写实现，约 120 行，**零运行时依赖**。
 
 ```
 src/lib/i18n/
-├── zh-CN.ts          # 唯一真源，as const
+├── zh-CN.ts          # 唯一真源，as const（当前 302 个键）
 ├── en-US.ts          # Record<keyof typeof zhCN, string> → 缺键是编译错误
 ├── index.svelte.ts   # 语言状态（$state）+ t() + 持久化
-└── errors.ts         # 字段标签 + validationText()
+└── errors.ts         # 字段级错误的唯一渲染入口：fieldLabel() + validationText() + fieldErrorOf()
 ```
 
 ### 4.1 为什么不用库
@@ -147,16 +149,24 @@ localStorage['mini-ruoyi.locale'] 存在且在支持列表内 → 用它
 
 ### 4.5 字段级校验错误的渲染
 
-后端只给 `{field, rule, param}`，前端拼文案：
+后端只给 `{field, rule, param}`，文案由前端拼：规则拼成 `validation.<rule>` 字典键，
+**未实现的规则回落到 `validation.default`**，所以后端新增一条规则不会让界面崩。
 
-```ts
-validationText({ field: 'name', rule: 'min', param: '2' })
-// → "名称长度不能少于 2 个字符"
-```
+这段逻辑全部收在 `i18n/errors.ts`：
 
-- `field` 经 `fieldLabel()` 映射成标签，**未知字段回落到字段名本身**，
-  后端加了字段而前端还没补标签时不会显示空白
-- `rule` 拼成 `validation.min` 字典键，**未实现的规则回落到 `validation.default`**，不会崩
+| 函数 | 职责 |
+| --- | --- |
+| `fieldLabel(field)` | 字段名 → 文案键，查表在 `fieldLabelKeys`；**未知字段回落到字段名本身** |
+| `validationText(fe)` | 一条错误 → 可展示文案 |
+| `fieldErrorOf(errors, field)` | 取某字段的提示，没有就返回 `null`（模板里直接 `{#if}`） |
+
+四个用到表单错误的页面（`profile` / `users` / `roles` / `menus`）都只调 `fieldErrorOf()`。
+这里曾经是四份各写一遍的 `fieldError()`，用 `tKey(\`field.${field}\`)` 拼字段标签——
+而 `tKey()` 查不到键时**原样返回键名**，未知字段会直接显示成 `field.new_password不能为空`。
+
+现在这个缺口由后端用例 `TestFrontendDictCoversFieldNames` 兜住：它扫 `handler/*.go` 里
+所有带 `binding` 标签的 json 字段名，逐个断言 `fieldLabelKeys` 与两份字典里都有对应文案。
+新增一个校验字段而忘了补文案，`make test` 就会红。
 
 ## 5. 与后端的集成
 
@@ -185,7 +195,7 @@ validationText({ field: 'name', rule: 'min', param: '2' })
 | CSRF 注入 | 非 GET 请求自动带 `X-CSRF-Token`，值由会话状态在登录/刷新时设置 |
 | 401 处理 | 通过 `setUnauthorizedHandler` 注册的回调清空会话状态并回登录页 |
 | 网络异常 | `fetch` 本身失败 → `error.network` |
-| 非信封响应 | 判为 `error.backendUnreachable`，见 §5.3 |
+| 非信封响应 | 判为 `error.backendUnreachable`，见 §5.4 |
 | multipart | 单独的 `api.upload()`：**不能设 Content-Type**，boundary 必须由浏览器生成 |
 
 会话状态（`stores/session.svelte.ts`）与客户端之间是**单向依赖**：
@@ -202,7 +212,7 @@ window.addEventListener('vite:preloadError', () => location.reload())
 后端直接托管产物，前端重新构建后旧的哈希文件会被清理。已经打开着的标签页若再做懒加载
 就会拿到 404，这里直接整页刷新去取最新版本。
 
-### 5.3 ⚠️ 「响应不是信封」意味着请求没到后端
+### 5.4 ⚠️ 「响应不是信封」意味着请求没到后端
 
 `client.ts` 判断响应的方式不是「HTTP 状态码是否 2xx」，而是**「是不是本服务的信封格式」**
 （`{code, msg, ...}`）。因为「后端没起来」和「后端出错了」是两件排查方向完全不同的事：
@@ -221,7 +231,7 @@ window.addEventListener('vite:preloadError', () => location.reload())
 `middleware.Recovery()` 替换了 `gin.Recovery()`：后者返回空 body 的 500，
 会破坏这个前提，也违反了「所有 API 响应都带信封」的契约。
 
-## 5.4 会话与启动流程
+### 5.5 会话与启动流程
 
 `src/lib/stores/session.svelte.ts` 持有用户、权限码、菜单树与 CSRF 令牌。
 
@@ -240,7 +250,7 @@ window.addEventListener('vite:preloadError', () => location.reload())
 `client.ts` 收到 401 时会调用 `setUnauthorizedHandler` 注册的回调（即 `clear()`），
 从而自动登出。这样 client 保持对业务状态无感知，会话逻辑集中在 store 里。
 
-## 5.5 路由
+### 5.6 路由
 
 `src/lib/router.svelte.ts` 约 100 行，没有路由库。
 
@@ -270,7 +280,7 @@ window.addEventListener('vite:preloadError', () => location.reload())
 一个没有任何权限的账号又会退回「什么都不能做」。
 对应地，后端的 `/profile*` 走的是 `self` 路由而不是 `protect`。
 
-## 5.6 多标签页
+### 5.7 多标签页
 
 `src/lib/stores/tabs.svelte.ts` 只维护「打开了哪些标签」；**当前激活的是哪一个由路由决定**
 （`route.pathname`）。不另存一份 activePath，否则浏览器前进/后退、直接改地址栏都会绕过它。
@@ -279,7 +289,7 @@ window.addEventListener('vite:preloadError', () => location.reload())
 这正是多标签页的意义：切回来时表单内容、滚动位置、已加载的数据都还在。
 代价是打开的页面越多，常驻的组件实例越多——管理后台的标签数在个位数量级，可以接受。
 
-两个由测试兜住的坑：
+三个由测试兜住的坑：
 
 1. **只在「路径变化」时开标签，而不是「当前路径是个菜单页」时开。**
    后者会让「关闭全部」失效——关掉之后路径没变，effect 重跑又把标签加回来。
@@ -293,7 +303,7 @@ window.addEventListener('vite:preloadError', () => location.reload())
    strict mode 报错。`e2e/helpers.ts` 的 `filters()` 已经限定到
    `[data-testid="tab-panel"]:visible`。
 
-## 5.7 ⚠️ 409 是确认信号，不是错误
+### 5.8 ⚠️ 409 是确认信号，不是错误
 
 删除有子数据的资源时，后端返回 `409 + error.hasDependents + 影响面`。
 **这不是错误**，前端不能弹错误提示，而要弹确认框。
@@ -425,15 +435,15 @@ web/dist/index.html   →  服务根路径，Cache-Control: no-cache
 web/dist/assets/*     →  /assets/*，Cache-Control: immutable
 ```
 
-**当前产物体积**（实测，含 i18n、登录、应用外壳与三个管理页面）：
+**当前产物体积**（实测，含 i18n、登录、应用外壳与全部 11 个业务页面）：
 
 | 文件 | 原始 | gzip |
 | --- | --- | --- |
 | `index.html` | 0.5 KB | 0.3 KB |
-| `assets/index-*.css` | 42.5 KB | 8.2 KB |
-| `assets/index-*.js` | 241 KB | **75.7 KB** |
-| `assets/*.woff2`（Inter 可变字体全部子集） | 224 KB | — |
-| `dist` 总计 | 400 KB | — |
+| `assets/index-*.css` | 43.6 KB | 8.5 KB |
+| `assets/index-*.js` | 314 KB | **90 KB** |
+| `assets/*.woff2`（Inter 可变字体全部子集） | 218 KB | — |
+| 总计（12 个文件） | 577 KB | — |
 
 字体是最大的一块。若只面向中英文，可裁成 latin + latin-ext 子集。
 
@@ -451,11 +461,12 @@ npm run build       # 生产构建
 
 ## 9. 待办
 
+多标签页、列表筛选（用户 / 角色 / 菜单 / 日志 / 会话）与会话管理页都已经落地，
+见 §5.7 与 `pages/monitor/sessions.svelte`。剩下的是：
+
 | 项 | 说明 |
 | --- | --- |
-| **多标签页** | 目前内容区只渲染当前页面；标签页需要保留已打开页面的状态 |
-| **列表筛选与排序** | 用户/角色列表目前只支持分页，后端也没有筛选参数 |
-| **会话管理页** | 后端 `sys_sessions` 表与查询已就位，缺一个「我登录了哪些设备」的列表与踢人入口 |
+| **排序** | 列表接口支持筛选与分页，但还没有排序参数 |
 | **浏览器端验证** | 见下方「验证方式的边界」 |
 
 ### 9.1 验证方式
@@ -465,8 +476,8 @@ npm run build       # 生产构建
 | 层 | 命令 | 覆盖 |
 | --- | --- | --- |
 | 类型与模板 | `npm run check` | svelte-check + tsc |
-| 接口契约 | `make test` | 后端 70+ 用例（CGO 无关的正确性都在这层） |
-| 真实交互 | `make test-e2e` | Playwright + Chromium，37 个用例 |
+| 接口契约 | `make test` | 后端 114 个用例（CGO 无关的正确性都在这层） |
+| 真实交互 | `make test-e2e` | Playwright + Chromium，11 个 spec / 77 个用例 |
 
 E2E 走 `webServer` 自动起一个**用临时库的后端**，每次运行前清库——
 残留数据会让「共 N 条」这类断言变成依赖执行顺序，非常难查。

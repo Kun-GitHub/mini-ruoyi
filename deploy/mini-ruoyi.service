@@ -11,7 +11,7 @@
 
 [Unit]
 Description=mini-ruoyi admin platform
-Documentation=https://github.com/saas-zero/saas-zero
+Documentation=https://github.com/Kun-GitHub/mini-ruoyi
 After=network-online.target
 Wants=network-online.target
 

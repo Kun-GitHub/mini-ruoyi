@@ -56,7 +56,7 @@ Vite dev server 把 `/api` 与 `/healthz` 代理到 `:8080`，前端热更新与
 
 ```jsonc
 {
-  "code": 0,                       // 0 = 成功，1 = 失败
+  "code": 200,                       // 0 = 成功，1 = 失败
   "msg":  "ok",                    // 成功为 "ok"；失败为 i18n 键（见 §6）
   "data": { },                     // 只有成功时存在
   "errors": [ ]                    // 只有字段级校验失败时存在
@@ -86,11 +86,19 @@ curl、日志、监控、网关都能直接看出错误率，不用解析 body�
 | 不能删除/停用最后一个管理员 | 409 | `error.lastAdmin` |
 | 唯一字段冲突 | 409 | `error.duplicate`（`errors[]` 带冲突字段名） |
 | 提交了未知权限码 | 400 | `error.invalidPermCode` |
-| 响应不是本服务的信封 | 任意 | `error.backendUnreachable`（**前端产生**：请求没到后端，见 [architecture-web.md](architecture-web.md) §5.3） |
+| 响应不是本服务的信封 | 任意 | `error.backendUnreachable`（**前端产生**：请求没到后端，见 [architecture-web.md](architecture-web.md) §5.4） |
 | 请求体过大 | 413 | `error.bodyTooLarge` |
 | 触发限流 | 429 | `error.tooManyRequests` |
 | 服务不可用 | 503 | `error.serviceUnavailable` |
 | 服务器内部错误 | 500 | `error.internal` |
+| 旧密码不正确 | 400 | `error.wrongOldPassword` |
+| 上传的文件本身不合法（如空文件） | 400 | `error.invalidFile` |
+| cron 表达式无法解析 | 400 | `error.invalidJobCron` |
+| 不能踢掉自己当前这条会话 | 403 | `error.cannotKickSelf` |
+| 单个文件超过上限 | 413 | `error.fileTooLarge` |
+| 超出总容量配额 | 413 | `error.quotaExceeded` |
+
+完整的键清单在 §6（含只由前端产生的两个）。
 
 ### 3.2 字段级校验失败
 
@@ -186,7 +194,7 @@ DELETE /api/v1/menus/5?cascade=true
 | **后端只出 i18n 键** | 后端按 `Accept-Language` 输出文案 | 文案只需存在一处（前端，UI 所在处）；切换语言无需重新请求；后端保持语言中立，多语言用户都能用 |
 | **前端手写 i18n** | svelte-i18n / paraglide-js | 2 个语种、消息量小，运行时库的动态加载与格式化插件全用不上；手写版靠 TS 类型保证缺键编译报错 |
 | **版本化迁移** | `CREATE TABLE IF NOT EXISTS` | 后者无法改表结构，等于"上线后手工改库" |
-| **认证用 Cookie + 服务端 session** | 无状态 JWT | 单机单进程，JWT 的水平扩展优势为零，但"无法主动登出/踢人/权限变更不实时"的缺点一个不落。且若依本身的 JWT 也只是个壳，真实状态在 Redis——我们没有 Redis，session 表语义等价（**已定，尚未实现**） |
+| **认证用 Cookie + 服务端 session** | 无状态 JWT | 单机单进程，JWT 的水平扩展优势为零，但"无法主动登出/踢人/权限变更不实时"的缺点一个不落。且若依本身的 JWT 也只是个壳，真实状态在 Redis——我们没有 Redis，session 表语义等价。落地见 [schema.md](schema.md) §3.7 |
 | **不引入 Redis** | Redis 存 session | 单机上 Redis 只增加一个部署单元和一个故障点。同机 SQLite 主键查询（~1-3 µs）比 Redis over loopback（~30-60 µs）还快 |
 | **带内容哈希的静态资源永久缓存** | 统一 `no-cache` | 省掉首屏之外的全部重复请求；哈希保证不会拿错版本 |
 
@@ -358,7 +366,7 @@ Windows 走 kernel32 的 `GetDiskFreeSpaceExW`（同样是标准库，不加依�
 > 平台相关的代码在本机能编译**不代表**在别处也能编译。
 > `make check-cross` 会对 5 个平台各编译一遍，专门防这一类错误。
 
-两个实现细节：
+几处实现细节：
 
 | 细节 | 为什么 |
 | --- | --- |
@@ -368,6 +376,7 @@ Windows 走 kernel32 的 `GetDiskFreeSpaceExW`（同样是标准库，不加依�
 | `/proc/stat` 只取前 8 个字段 | 内核已把 `guest`/`guest_nice` 计进 `user`/`nice`，全加会算两遍，使用率偏高 |
 | `/proc/meminfo` 只认带 `kB` 单位的行 | 忽略单位会把 `1000 MB` 当成 `1000 kB`，差 1000 倍 |
 | `MemAvailable` 缺失时报「不可用」而不是当作 0 | 当作 0 会算出「100% 已用」，是个假告警 |
+| 磁盘使用率按 `total - Bfree` 算，而界面上的「可用」显示 `Bavail` | `Bavail` 才是非 root 用户真正能写进去的量（ext4 默认给 root 留 5%），所以使用率跟 `df` 一致；代价是三个数字相加会小于 `total` |
 
 这些解析逻辑只在 Linux 上跑，而开发机通常是 macOS，所以
 `internal/system/system_test.go` 用**真实的 `/proc` 内容**做样本——
@@ -416,20 +425,13 @@ error.backendUnreachable    # 有响应但不是信封：请求被代理拦下�
 
 ## 8. 待办清单
 
-### 8.1 已确定方案、尚未实现
-
-| 项 | 方案 |
-| --- | --- |
-| 认证 | Cookie + 服务端 session 表（HttpOnly / SameSite=Lax），配 CSRF 校验 |
-| 鉴权 | 若依式 RBAC：用户 / 角色 / 菜单 / API 权限；表结构见 [schema.md](schema.md)，权限点**以代码为准**，在路由上声明（`perm("system:user:add")`） |
-| 权限缓存 | 进程内 `map[userID]permSet` + 全局版本号，改角色/菜单时 bump 版本整体失效 |
-| 动态路由 | 后端返回菜单树，前端用 `import.meta.glob` 把 `component` 字段映射到页面模块 |
-
-### 8.2 待处理
+认证、鉴权、权限缓存、动态路由、审计日志都已经落地（本文 §5 与
+[architecture-server.md](architecture-server.md) 里有对应的实现说明），这里只列还没做的。
 
 | 项 | 说明 |
 | --- | --- |
-| 表结构设计 | ~~待设计~~ **已完成**，见 [schema.md](schema.md) |
 | 初始数据库可复现 | 目前 `server/data.db` 随仓库分发。最终应改为从 `migrations/` + 种子 SQL 重新生成，而不是手工改库后提交 |
-| 字体体积 | Inter 可变字体包含全部子集，`dist` 里 woff2 共 224 KB。若只面向中英文可裁剪为 latin + latin-ext |
-| 操作日志表 | 若依的 `sys_oper_log` 需要每请求一写。SQLite 是单写者，届时应改成内存 channel 缓冲 + 批量落库，而不是直接写库 |
+| 字体体积 | Inter 可变字体包含全部子集，`dist` 里 woff2 共 218 KB。若只面向中英文可裁剪为 latin + latin-ext |
+
+前端侧的待办见 [architecture-web.md](architecture-web.md) §9，后端侧见
+[../server/README.md](../server/README.md)「尚未实现」，表结构侧见 [schema.md](schema.md) §11。

@@ -236,9 +236,10 @@ curl -b cookie.txt -X DELETE localhost:8080/api/v1/menus/1
 
 ### 改表结构的注意事项
 
-仓库里的 `data.db` 是随代码分发的旧库，可能没有迁移记录。因此**首个迁移要能容忍表已存在**
-（用 `IF NOT EXISTS`），否则老库升级会失败。参考
-`migrations/0001_init_devices.sql` 与用例 `TestMigrateOnLegacyDatabase`。
+仓库里的 `data.db` 是随代码分发的旧库，表已存在但没有迁移记录。因此迁移只能**追加**：
+版本记录在 `schema_migrations`，只执行没跑过的文件，不重建、不覆盖已有数据，
+否则老库升级会失败。参考用例 `TestMigrateOnLegacyDatabase`（旧库带数据、无迁移记录）与
+`TestMigrateDetectsMissingTables`（记录说跑过、表却不在）。
 
 ### SQLite 连接配置
 

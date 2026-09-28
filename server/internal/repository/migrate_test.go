@@ -127,8 +127,8 @@ func TestSeedRbac(t *testing.T) {
 	}
 }
 
-// TestMigrateOnLegacyDatabase 覆盖升级路径：仓库中随附的初始 data.db 由更早的
-// "CREATE TABLE IF NOT EXISTS" 版本创建，表已存在但没有迁移记录。
+// TestMigrateOnLegacyDatabase 覆盖升级路径：仓库中随附的初始 data.db 表已存在、有数据，
+// 但没有迁移记录。
 func TestMigrateOnLegacyDatabase(t *testing.T) {
 	db, err := NewDB(filepath.Join(t.TempDir(), "legacy.db"))
 	if err != nil {

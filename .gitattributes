@@ -1,0 +1,12 @@
+# 行尾策略：一律 LF 入库、LF 检出，不依赖各人机器上的 core.autocrlf。
+#
+# 为什么必须写死：core.autocrlf=true（Windows 上的常见默认）会让检出的每个文本文件
+# 都带 CRLF，而 gofmt 把带 CRLF 的文件判成「未格式化」——`make check` 的第一道门禁
+# 于是必然失败，还会把仓库里每一个 .go 文件都列出来。仓库里的 blob 一直是 LF
+# （CR=0），所以这个问题只在 CRLF 检出的环境暴露，Linux CI 上根本看不到。
+#
+# text=auto 让 git 自己判断是否文本（二进制不动），eol=lf 固定检出结果。
+* text=auto eol=lf
+
+# SQLite 库是二进制，禁止任何文本处理
+*.db binary

@@ -1,6 +1,12 @@
 .PHONY: help deps web build clean run test check test-e2e dev-server dev-web
 
-BIN := bin/mini-ruoyi
+# Windows 上可执行文件必须带 .exe：不带扩展名的文件 CreateProcess 直接报 ENOENT，
+# build 出来的东西跑不起来，E2E 的 spawn 也找不到它。
+ifeq ($(OS),Windows_NT)
+EXE := .exe
+endif
+
+BIN := bin/mini-ruoyi$(EXE)
 
 help: ## 显示可用命令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -20,7 +26,7 @@ build: web ## 构建二进制到 bin/，并把前端产物放到 bin/web/
 	go build -C server -o ../$(BIN) ./cmd/server
 
 run: build ## 构建后直接启动
-	cd bin && ./mini-ruoyi
+	cd bin && ./mini-ruoyi$(EXE)
 
 # -count=1 不是可选项：httpx / perm 里有几个用例会读取前端 i18n 字典，
 # 而 Go 的测试缓存不追踪测试运行期 os.ReadFile 打开的文件——不加这个标志，

@@ -25,6 +25,7 @@
     TableHeader,
     TableRow,
   } from '$lib/components/ui/table'
+  import { fieldErrorOf } from '$lib/i18n/errors'
   import { t, tKey } from '$lib/i18n/index.svelte'
   import { replaceQuery, route } from '$lib/router.svelte'
   import { notifyError, notifySuccess } from '$lib/stores/notify.svelte'
@@ -109,16 +110,6 @@
   let formOpen = $state(false)
   let saving = $state(false)
   let fieldErrors = $state<FieldError[]>([])
-
-  function fieldError(field: string): string | null {
-    const fe = fieldErrors.find((e) => e.field === field)
-    if (!fe) return null
-    return tKey(`validation.${fe.rule}`, {
-      field: tKey(`field.${field}`),
-      param: fe.param ?? '',
-      rule: fe.rule,
-    })
-  }
 
   async function save(event: SubmitEvent) {
     event.preventDefault()
@@ -364,12 +355,12 @@
         <div class="grid gap-1.5">
           <Label for="r-code">{t('role.code')}</Label>
           <Input id="r-code" bind:value={editForm.code} disabled={editForm.id !== null} required minlength={2} maxlength={64} />
-          {#if fieldError('code')}<p class="text-sm text-destructive">{fieldError('code')}</p>{/if}
+          {#if fieldErrorOf(fieldErrors, 'code')}<p class="text-sm text-destructive">{fieldErrorOf(fieldErrors, 'code')}</p>{/if}
         </div>
         <div class="grid gap-1.5">
           <Label for="r-name">{t('field.name')}</Label>
           <Input id="r-name" bind:value={editForm.name} required minlength={2} maxlength={128} />
-          {#if fieldError('name')}<p class="text-sm text-destructive">{fieldError('name')}</p>{/if}
+          {#if fieldErrorOf(fieldErrors, 'name')}<p class="text-sm text-destructive">{fieldErrorOf(fieldErrors, 'name')}</p>{/if}
         </div>
         <div class="grid gap-1.5">
           <Label for="r-remark">{t('role.remark')}</Label>

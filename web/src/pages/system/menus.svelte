@@ -23,6 +23,7 @@
     TableHeader,
     TableRow,
   } from '$lib/components/ui/table'
+  import { fieldErrorOf } from '$lib/i18n/errors'
   import { t, tKey } from '$lib/i18n/index.svelte'
   import { notifyError, notifySuccess } from '$lib/stores/notify.svelte'
   import { session } from '$lib/stores/session.svelte'
@@ -100,16 +101,6 @@
   )
   let saving = $state(false)
   let fieldErrors = $state<FieldError[]>([])
-
-  function fieldError(field: string): string | null {
-    const fe = fieldErrors.find((e) => e.field === field)
-    if (!fe) return null
-    return tKey(`validation.${fe.rule}`, {
-      field: tKey(`field.${field}`),
-      param: fe.param ?? '',
-      rule: fe.rule,
-    })
-  }
 
   function openCreate() {
     form = emptyForm()
@@ -301,7 +292,7 @@
           <Label for="m-title">{t('menu.titleKey')}</Label>
           <Input id="m-title" bind:value={form.title_key} required maxlength={128} placeholder="menu.system.users" />
           <p class="text-xs text-muted-foreground">{t('menu.titleKeyHint')}</p>
-          {#if fieldError('title_key')}<p class="text-sm text-destructive">{fieldError('title_key')}</p>{/if}
+          {#if fieldErrorOf(fieldErrors, 'title_key')}<p class="text-sm text-destructive">{fieldErrorOf(fieldErrors, 'title_key')}</p>{/if}
         </div>
 
         <div class="grid grid-cols-2 gap-4">
@@ -320,7 +311,7 @@
             <Label for="m-component">{t('menu.component')}</Label>
             <Input id="m-component" bind:value={form.component} maxlength={255} placeholder="system/users" />
             <p class="text-xs text-muted-foreground">{t('menu.componentHint')}</p>
-            {#if fieldError('component')}<p class="text-sm text-destructive">{fieldError('component')}</p>{/if}
+            {#if fieldErrorOf(fieldErrors, 'component')}<p class="text-sm text-destructive">{fieldErrorOf(fieldErrors, 'component')}</p>{/if}
           </div>
         {/if}
 

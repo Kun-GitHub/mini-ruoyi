@@ -15,7 +15,8 @@ import { fileURLToPath } from 'node:url'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(here, '..', '..')
 const binDir = path.join(repoRoot, 'bin')
-const binary = path.join(binDir, 'mini-ruoyi')
+// Windows 上只能执行 .exe，Makefile 也会把产物建成这个名字
+const binary = path.join(binDir, process.platform === 'win32' ? 'mini-ruoyi.exe' : 'mini-ruoyi')
 const dbPath = path.join(binDir, 'e2e.db')
 
 if (!existsSync(binary)) {

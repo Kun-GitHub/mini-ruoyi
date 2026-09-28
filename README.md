@@ -202,9 +202,9 @@ make clean       清理 bin/ 和 web/dist
 ## 当前状态
 
 **已实现**：分层骨架、统一响应契约、SQLite 连接与迁移、静态资源托管、按 IP 限流、
-前端工具链与 i18n、`devices` 示例资源的完整 CRUD + 分页。
+前端工具链与 i18n。
 
-**后端已完成**：认证（session + CSRF）、RBAC 鉴权（23 个端点，权限码在代码里声明并启动校验）、
+**后端已完成**：认证（session + CSRF）、RBAC 鉴权（33 个受权限保护的端点，权限码在代码里声明并启动校验）、
 用户 / 角色 / 菜单 / 权限码的完整 CRUD、删除确认与守卫、版本化迁移。
 表结构见 [docs/schema.md](docs/schema.md)，接口见 [server/README.md](server/README.md)。
 

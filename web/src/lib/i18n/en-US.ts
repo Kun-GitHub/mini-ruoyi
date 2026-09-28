@@ -52,11 +52,14 @@ export const enUS: Record<keyof typeof zhCN, string> = {
   'field.name': 'Name',
   'field.username': 'Username',
   'field.password': 'Password',
+  'field.old_password': 'Current password',
+  'field.new_password': 'New password',
   'field.nickname': 'Nickname',
   'field.mobile': 'Mobile',
   'field.email': 'Email',
   'field.status': 'Status',
   'field.code': 'Role code',
+  'field.role_ids': 'Roles',
   'field.remark': 'Remark',
   'field.parent_id': 'Parent',
   'field.sort': 'Order',
@@ -65,6 +68,7 @@ export const enUS: Record<keyof typeof zhCN, string> = {
   'field.path': 'Route path',
   'field.component': 'Page component',
   'field.icon': 'Icon',
+  'field.cron': 'Cron expression',
   'field.id': 'ID',
 
   // Menu titles. sys_menus.title_key stores these keys (see docs/schema.md).

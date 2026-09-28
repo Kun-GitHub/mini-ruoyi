@@ -25,7 +25,8 @@
     TableHeader,
     TableRow,
   } from '$lib/components/ui/table'
-  import { t, tKey } from '$lib/i18n/index.svelte'
+  import { fieldErrorOf } from '$lib/i18n/errors'
+  import { t } from '$lib/i18n/index.svelte'
   import { replaceQuery, route } from '$lib/router.svelte'
   import { notifyError, notifySuccess } from '$lib/stores/notify.svelte'
   import { session } from '$lib/stores/session.svelte'
@@ -190,15 +191,6 @@
     } catch (err) {
       notifyError(errKey(err))
     }
-  }
-
-  function fieldError(field: string): string | null {
-    const fe = fieldErrors.find((e) => e.field === field)
-    if (!fe) return null
-    // 后端只给 rule / param，文案在这里拼
-    const key = `validation.${fe.rule}`
-    const label = tKey(`field.${field}`)
-    return tKey(key, { field: label, param: fe.param ?? '', rule: fe.rule })
   }
 
   async function save(event: SubmitEvent) {
@@ -452,8 +444,8 @@
             minlength={2}
             maxlength={128}
           />
-          {#if fieldError('username')}
-            <p class="text-sm text-destructive">{fieldError('username')}</p>
+          {#if fieldErrorOf(fieldErrors, 'username')}
+            <p class="text-sm text-destructive">{fieldErrorOf(fieldErrors, 'username')}</p>
           {/if}
         </div>
 
@@ -468,8 +460,8 @@
               minlength={8}
               maxlength={72}
             />
-            {#if fieldError('password')}
-              <p class="text-sm text-destructive">{fieldError('password')}</p>
+            {#if fieldErrorOf(fieldErrors, 'password')}
+              <p class="text-sm text-destructive">{fieldErrorOf(fieldErrors, 'password')}</p>
             {/if}
           </div>
         {/if}
@@ -487,8 +479,8 @@
           <div class="grid gap-1.5">
             <Label for="u-email">{t('user.email')}</Label>
             <Input id="u-email" type="email" bind:value={form.email} maxlength={64} />
-            {#if fieldError('email')}
-              <p class="text-sm text-destructive">{fieldError('email')}</p>
+            {#if fieldErrorOf(fieldErrors, 'email')}
+              <p class="text-sm text-destructive">{fieldErrorOf(fieldErrors, 'email')}</p>
             {/if}
           </div>
         </div>
@@ -567,13 +559,7 @@
           maxlength={72}
         />
         {#if pwErrors.length > 0}
-          <p class="text-sm text-destructive">
-            {tKey(`validation.${pwErrors[0].rule}`, {
-              field: tKey('field.password'),
-              param: pwErrors[0].param ?? '',
-              rule: pwErrors[0].rule,
-            })}
-          </p>
+          <p class="text-sm text-destructive">{fieldErrorOf(pwErrors, 'password')}</p>
         {/if}
       </div>
 

@@ -8,25 +8,39 @@ Go 1.25 + Gin 1.10 + `database/sql` + SQLite（`modernc.org/sqlite`，纯 Go 无
 server/
 ├── go.mod                          # module mini-ruoyi
 ├── data.db                         # 随仓库分发的初始数据库
+├── config/config.example.yaml      # 带注释的配置样例（config.yaml 本身被 gitignore）
 ├── cmd/server/main.go              # 启动、依赖组装、优雅关闭
 └── internal/
-    ├── config/
-    │   ├── config.go               # 配置结构与加载（文件 + 环境变量）
-    │   └── config.example.yaml     # 带注释的配置样例（config.yaml 本身被 gitignore）
+    ├── config/config.go            # 配置结构与加载（文件 + 环境变量）
     ├── domain/                     # 实体 + 领域错误（最内层，不依赖任何包）
-    │   └── device.go
+    │   ├── consts.go               # 状态、菜单类型、内置角色编码
+    │   ├── errors.go               # 错误哨兵 + DependentsError / DuplicateError
+    │   ├── user.go · rbac.go       # User；Role / Menu / MenuNode
+    │   ├── session.go · log.go     # Session / SessionView；LoginLog / OperLog
+    │   └── file.go · job.go        # File / FileUsage；Job
     ├── httpx/response.go           # 统一响应信封、错误键、错误→HTTP 状态码映射
+    ├── perm/perm.go                # 权限码常量与分组，不查库
+    ├── auth/                       # 密码哈希、会话签发与解析
     ├── repository/
     │   ├── sqlite.go               # 连接与连接池
     │   ├── migrate.go              # 迁移执行器
-    │   ├── migrations/*.sql        # 版本化 DDL
-    │   └── device_repository.go    # 单表 CRUD
-    ├── service/device_service.go   # 业务规则、事务边界、分页归一化
-    ├── system/system.go            # 采集 CPU/内存/磁盘/进程（只读 OS 探测，不依赖库）
+    │   ├── time.go · filter.go     # 时间存储格式；LIKE 转义与 where 条件拼装
+    │   ├── migrations/*.sql        # 版本化 DDL + 种子数据
+    │   └── *_repository.go         # 单表 CRUD：user / role / menu / session / log / file / job
+    ├── service/                    # 业务规则、事务边界、分页归一化
+    │   ├── paging.go               # Page[T] 与页码归一化
+    │   ├── authz_service.go        # 权限判定（管理员铺满全部权限码）
+    │   ├── log_service.go          # 审计日志缓冲与批量落库
+    │   └── *_service.go            # user / role / menu / file / job / monitor
+    ├── system/                     # 采集 CPU/内存/磁盘/进程（只读 OS 探测，不依赖库）
+    │   ├── system.go               # Snapshot 组装与 /proc 解析
+    │   └── disk_unix.go · disk_windows.go   # Statfs vs GetDiskFreeSpaceExW
+    ├── job/                        # job.go 注册表；defs.go 任务定义
     ├── handler/                    # HTTP 适配：绑定、校验、响应
-    ├── middleware/middleware.go    # 日志、限流、请求体上限、静态资源缓存头
+    ├── middleware/                 # auth.go 会话与 CSRF；operlog.go 审计；recovery.go 信封化 panic
     └── httpserver/
         ├── router.go               # 路由注册、中间件装配
+        ├── registrar.go            # 路由登记入口（公开 / 自助 / 受保护三类）
         └── static.go               # 磁盘静态托管 + SPA 兜底
 ```
 
@@ -41,7 +55,7 @@ perm        →（不依赖任何内部包）
 auth        → domain, repository
 repository  → domain
 service     → auth, domain, perm, repository
-handler     → domain, httpx, middleware, perm, service
+handler     → domain, httpx, middleware, perm, repository, service
 middleware  → auth, domain, httpx, perm, service
 httpserver  → handler, httpx, middleware, perm
 ```
@@ -54,14 +68,16 @@ httpserver  → handler, httpx, middleware, perm
 | `httpx` | 响应信封、错误键、错误→状态码映射 | 依赖 handler / service / repository |
 | `repository` | 单表 SQL，行 ↔ 实体 | 包含业务规则、跨表事务编排 |
 | `service` | 业务规则、事务边界、分页归一化 | 依赖 `*gin.Context`、构造 HTTP 响应 |
-| `handler` | 参数绑定、调用 service、写响应 | **依赖 `repository`**（靠 `domain` 的错误哨兵判错） |
+| `handler` | 参数绑定、调用 service、写响应 | 写 SQL、包含业务规则（判错只用 `domain` 的错误哨兵） |
 | `middleware` | 横切关注点 | 依赖 handler |
 | `httpserver` | 路由与中间件装配、静态资源 | 包含业务逻辑 |
 
 两条硬规则：
 
-1. **handler 不得 import repository。** 判错统一用 `domain.ErrNotFound`，映射集中在
-   `httpx.FailFromError` 一处。历史上这里是跨层泄漏，已修正。
+1. **判错统一用 `domain` 的错误哨兵**（`ErrNotFound` / `ErrHasDependents` / `ErrDuplicate` …），
+   状态码映射集中在 `httpx.FailFromError` 一处，handler 里不该出现任何 `switch` 状态码。
+   handler 会 import `repository`，但只用来组装列表筛选条件（`repository.Filter` 家族），
+   不写 SQL、不做业务判断——历史上这里是真正的跨层泄漏（handler 自己写查询），已修正。
 2. **响应信封住在 `httpx` 而非 `handler`。** middleware 和 httpserver 同样要写响应
    （401/403/404/429/503），若信封住在 handler 中，这些包就得反向依赖 handler。
 
@@ -101,21 +117,59 @@ srv.Shutdown(15s)                    优雅关闭
 装配顺序即执行顺序（`httpserver/router.go`）：
 
 ```
-1. gin.Recovery()                                   panic → 500
+1. middleware.Recovery()                             panic → 500（仍是信封，不是空 body）
 2. middleware.RequestLogger()                       方法 路径 状态码 耗时
-3. SetTrustedProxies(nil)                           ← 不是中间件，是路由配置，但顺序关键
-4. middleware.BodyLimit(1 MiB)                      请求体上限
+3. SetTrustedProxies(APP_TRUSTED_PROXIES)           ← 不是中间件，是路由配置，但要早于限流
+4. middleware.BodyLimit(1 MiB)                      请求体上限（排除 /api/v1/files）
 5. middleware.RateLimit(20 rps, burst 40, TTL 3m)   按 IP 限流
 6. middleware.ImmutableAssets("/assets/")           静态资源长缓存头
    ── 路由 ──
-   GET  /healthz
-   /api/v1/devices  POST / GET / GET :id / PATCH :id / DELETE :id
+   GET  /healthz                                     → SQLite Ping
    /assets/*filepath
+   /api/v1   7→8→9 对整组生效，10 只挂在 protect 注册的路由上
+   │   7. Auth.Require()                             无会话 → 401
+   │   8. Auth.CSRF()                                写请求缺令牌 → 403
+   │   9. middleware.OperationLog(...)                写操作与 401/403 记审计
+   │  10. middleware.RequirePerm(code)                缺权限码 → 403
+   └── 菜单 / 角色 / 用户 / 权限清单 / 文件 / 任务 / 监控 / 会话 / 日志
    ── NoRoute ──
    /api/* 与 /assets/* → JSON 404；其余 → index.html（SPA 兜底）
 ```
 
-### 4.1 两个容易踩的坑
+三条顺序约束，动装配顺序前先看这里：
+
+| 约束 | 为什么 |
+| --- | --- |
+| `SetTrustedProxies` 早于 `RateLimit` | 限流按 `c.ClientIP()` 计数，代理配置比它晚就等于没配 |
+| `Require` 早于 `CSRF` | 先确认「是谁」，令牌才有归属可比 |
+| `OperationLog` 早于 `RequirePerm` | 越权试探（403）也要被记录下来 |
+
+`RequirePerm` 挂在每条受保护路由上而不是 `r.Use`：权限码本来就是逐路由的，
+装配时自动带上就不可能漏。`httpserver/registrar.go` 只有三个登记入口——
+`open`（必须写明「为什么不登录」，理由会被测试断言）、`self`（仅登录，操作自己的数据）、
+`protect`（登录 + 权限码；码必须是 `internal/perm` 声明过的，写错启动即 panic）。
+
+### 4.1 路由清单
+
+当前 38 个端点：**1 公开 + 4 自助 + 33 受权限保护**（下表省略 `/api/v1` 前缀）。
+
+| 分组 | 端点 |
+| --- | --- |
+| 公开 | `POST /auth/login` |
+| 自助（`self`） | `GET /auth/me`、`POST /auth/logout`、`PUT /profile`、`PUT /profile/password` |
+| 菜单 | `GET /menus`、`GET /menus/:id`、`POST /menus`、`PUT /menus/:id`、`DELETE /menus/:id` |
+| 角色 | `GET /roles`、`GET /roles/:id`、`GET /roles/:id/grants`、`POST /roles`、`PUT /roles/:id`、`PUT /roles/:id/grants`、`DELETE /roles/:id` |
+| 用户 | `GET /users`、`GET /users/:id`、`POST /users`、`PUT /users/:id`、`PUT /users/:id/roles`、`PUT /users/:id/password`、`DELETE /users/:id` |
+| 权限清单 | `GET /perms` |
+| 文件 | `GET /files`、`GET /files/:id/download`、`POST /files`、`DELETE /files/:id` |
+| 任务 | `GET /jobs`、`PUT /jobs/:key`、`POST /jobs/:key/run` |
+| 监控 | `GET /system`、`GET /sessions`、`DELETE /sessions/:hash`、`DELETE /users/:id/sessions`、`GET /login-logs`、`GET /oper-logs` |
+
+读与写的权限码分开声明：「能看」等于「能改」是常见的授权漏洞，所以
+`GET /roles/:id/grants` 用 `list` 码而 `PUT /roles/:id/grants` 用 `edit` 码，
+`POST /jobs/:key/run`（立刻跑一次）与 `PUT /jobs/:key`（改调度）也各用各的。
+
+### 4.2 两个容易踩的坑
 
 **限流必须按 IP，不能全进程。** 全进程令牌桶意味着单个客户端刷满配额后，其他所有用户
 一起收到 429——限流器反而成了 DoS 放大器。同时限流器 map 必须惰性 GC，
@@ -227,7 +281,8 @@ DATETIME 能**直接扫进 `time.Time`**（驱动已做转换，无需 `_time_fo
 ### 6.4 空列表
 
 `List` 用 `make([]T, 0, limit)` 而不是 `var list []T`，确保空结果序列化成 `[]` 而非 `null`。
-否则前端拿到 `data.list === null` 会崩。
+否则前端拿到 `data.list === null` 会崩。菜单树这类不分页的查询用 `make([]Menu, 0)`——
+关键是最初那个 `0` 长度，不是容量。
 
 ## 7. 静态资源托管（`httpserver/static.go`）
 
@@ -288,22 +343,28 @@ cd server && go test ./...        # 全部
 go test ./... -run TestNewDB      # 单个
 ```
 
+当前 113 个用例，分布在 15 个测试文件里。`handler` / `job` / `auth` / `domain` / `cmd/server`
+没有独立测试文件——它们的正确性由 `httpserver` 的端到端用例覆盖（handler 的每个分支
+基本都对应一条 HTTP 断言）。
+
 | 文件 | 覆盖 |
 | --- | --- |
 | `repository/sqlite_test.go` | **每条连接的 PRAGMA 都生效**（防 A1 回归）、WAL 已启用 |
 | `repository/migrate_test.go` | 迁移幂等；在旧版遗留库（有表无迁移记录）上升级不丢数据；**种子密码哈希能通过 bcrypt 校验**；**结构校验能发现「记录说已应用、表却不在」** |
-| `repository/device_repository_test.go` | `created_at` 回填、空列表非 nil、分页、`ErrNotFound` |
-| `service/rbac_test.go` | 删除影响面（含后代菜单的授权）、级联删除、环引用拦截、四条删除守卫 |
+| `repository/filter_test.go` | LIKE 通配符转义（`%` / `_` / `\`）、用户输入不被当成通配符、筛选真的命中预期行 |
+| `service/rbac_test.go`（含 `authz_service` 的身份解析） | 删除影响面（含后代菜单的授权）、级联删除、环引用拦截、四条删除守卫、管理员身份解析、分页边界 |
 | `perm/perm_test.go` | 分组覆盖与去重、键名推导约定、未知权限码检出、前端字典覆盖 |
-| `service/authz_service.go` | 身份解析：内置管理员铺满全部权限码，其他用户查角色授权 |
 | `repository/session_repository_test.go` | **datetime 存储格式**、时间往返、过期清理、按用户踢人、删用户级联 |
 | `httpx/response_test.go` | 错误键唯一且命名规范、前端字典覆盖 |
-| `handler/device_handler_test.go` | `PATCH {}` 不能静默改 `enabled`、空列表 `[]`、snake_case 字段名 |
+| `config/config_test.go` | 没有配置文件用默认值、文件部分覆盖、环境变量覆盖文件、未知字段被拒、非法取值被拒、`web.dir` 的候选路径顺序 |
 | `httpserver/static_test.go` | SPA 兜底、缓存头、API 404 返回 JSON、目录不完整时启动失败 |
 | `httpserver/router_test.go` | **公开端点集合的 fail-closed 断言**、**装配遗漏检测**、未登录一律 401、登录/登出全链路、停用用户立刻失效、响应信封、错误键、字段级校验数组、413/404 映射 |
 | `httpserver/rbac_api_test.go` | 权限隔离（有码放行、无码 403）、授权按码精确生效、未知权限码拒绝、409 影响面与 cascade 确认、四条删除守卫、唯一冲突带字段名、重置密码踢会话 |
 | `middleware/middleware_test.go` | 限流按 IP、伪造 `X-Forwarded-For` 无效、请求体上限、缓存头只匹配前缀 |
-| `httpserver/router_test.go`（panic 用例） | **panic 也要返回信封**——空 body 的 500 会让前端把「后端出错」误判成「后端没起来」 |
+| `system/system_test.go` | `/proc/stat` / `meminfo` / `statm` / `loadavg` 的解析（用真实样本）、`guest` 不计两次、单位与不可用标记、非 Linux 平台自报不可用 |
+| `httpserver/monitor_test.go` | 会话列表与踢人、不能踢自己、登录日志记录成败与来源、操作日志记录写操作与 403、**操作日志不含请求体** |
+| `httpserver/fixture_test.go` | 不是用例，是被各测试复用的夹具（临时库 + 完整路由） |
+| `httpserver/router_test.go` 的 `TestPanicReturnsEnvelope` | **panic 也要返回信封**——空 body 的 500 会让前端把「后端出错」误判成「后端没起来」 |
 
 ### ⚠️ 两个跨语言用例必须用 `-count=1`
 
@@ -332,7 +393,7 @@ CI 是冷缓存所以不受影响；本地请用 `make test` 或 `make check`。
 以新增 `widget` 为例：
 
 1. `domain/widget.go` — 实体 + JSON tag
-2. `repository/migrations/0002_init_widgets.sql` — 建表 DDL
+2. `repository/migrations/0012_init_widgets.sql` — 建表 DDL（现有编号最大到 `0011`）
 3. `repository/widget_repository.go` — 单表 CRUD，判空返回 `domain.ErrNotFound`
 4. `service/widget_service.go` — 业务规则、分页归一化
 5. `handler/widget_handler.go` — 绑定 + 校验 + 调 service，错误交给 `httpx.FailBindError` / `FailFromError`

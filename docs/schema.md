@@ -595,9 +595,21 @@ func (s *AuthzService) allowed(u *domain.User, code string) bool {
 | 内置角色 `code = 'admin'` | 超级管理员，隐式放行全部权限（见 §8.2） |
 | `admin` 用户 | 密码 `admin123` 的 bcrypt 哈希，**直接写死在迁移里** |
 | `admin` 用户的 `sys_user_roles` 关联 | |
-| 菜单树 | 系统管理（目录）+ 用户/角色/菜单管理三个子菜单 |
+| 菜单树 | 三个目录（系统管理 / 系统监控 / 工具）+ 10 个页面菜单，分五次种入 |
 
 **不写 `sys_role_perms` / `sys_role_menus`** —— 见 §8.2。
+
+菜单分批种入是为了照顾已有库：新增菜单时不动旧迁移，追加一条新迁移。
+目录用 `WHERE NOT EXISTS` 包一层，所以在旧库上重跑不会出现第二份，
+页面菜单则直接以目录为父插入。
+
+| 迁移 | 菜单 |
+| --- | --- |
+| `0003_seed_rbac.sql` | 系统管理：用户管理 / 角色管理 / 菜单管理 |
+| `0005_seed_api_menu.sql` | 系统管理：权限清单（只读页，理由见 §8.4） |
+| `0007_seed_monitor_menu.sql` | 系统监控（新目录）：在线会话 / 登录日志 / 操作日志 |
+| `0009_seed_tool_menu.sql` | 工具（新目录）：文件管理 / 定时任务 |
+| `0011_seed_system_monitor_menu.sql` | 系统监控：服务监控（插到最前，其余三个 `sort` 依次后移） |
 
 ### 10.1 初始密码
 
@@ -618,7 +630,7 @@ func (s *AuthzService) allowed(u *domain.User, code string) bool {
 
 | 项 | 说明 |
 | --- | --- |
-| 操作日志 / 登录日志 | 若要做，注意 SQLite 是单写者：不能每请求直写库，应走内存 channel 缓冲 + 批量落库 |
 | 登录失败锁定 | 若要做，`status` 可能需要加回 `suspended` 或新增 `locked_until` 字段 |
 | 数据权限（按部门/按人可见范围） | 当前不做。若要做，"部门"需要重新引入，且 `sys_roles` 要加 `data_scope` |
-| 会话表 | 认证方案定为 Cookie + 服务端 session，该表结构在 `internal/auth` 落地时定义，见 [architecture.md](architecture.md) |
+
+会话表（§3.7）与日志表（§3.8）曾经也在这个表里，现在已经落地，所以不再列出。

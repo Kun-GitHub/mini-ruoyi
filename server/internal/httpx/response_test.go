@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -99,6 +101,100 @@ func TestFrontendDictCoversErrorKeys(t *testing.T) {
 		for _, key := range keys {
 			if !have[key] {
 				t.Errorf("%s 缺少错误键 %q", name, key)
+			}
+		}
+	}
+}
+
+// TestFrontendDictCoversFieldNames 检查每个可能出现在 errors[].field 里的字段名都能渲染成文案。
+//
+// 字段名来自后端请求结构体的 json tag（RegisterJSONFieldNames 让 gin 报 json 名
+// 而不是 Go 字段名），前端在 lib/i18n/errors.ts 的 fieldLabelKeys 里登记对应文案键。
+// 两侧漏一个都不会报错——界面只会显示 "field.old_password" 这样的原始键名。
+//
+// 字段清单**从 handler 源码扫出来**，不手写：手写的清单在新增字段时会静默过期，
+// 而那正是这个用例要防的事。
+//
+// ⚠️ 必须用 `go test -count=1` 或 `make test` 运行，原因见
+// internal/perm/perm_test.go 的 TestFrontendDictCoversPermKeys。
+func TestFrontendDictCoversFieldNames(t *testing.T) {
+	paths, err := filepath.Glob(filepath.Join("..", "handler", "*.go"))
+	if err != nil || len(paths) == 0 {
+		t.Skipf("跳过：扫不到 handler 源码（%v）。该用例需要完整的仓库布局。", err)
+	}
+
+	// 同一行里既要有 json tag 又要有 binding tag，才算「会变成字段级校验错误的字段」
+	fieldLine := regexp.MustCompile(`json:"([A-Za-z_][A-Za-z0-9_]*)[^"]*"\s*binding:"([^"]+)"`)
+	// 这两个 tag 不是校验规则，不会出现在 errors[].rule 里
+	notARule := map[string]bool{"omitempty": true, "dive": true}
+
+	fields := map[string]bool{}
+	rules := map[string]bool{}
+	for _, path := range paths {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("读 %s 失败: %v", path, err)
+		}
+		for _, m := range fieldLine.FindAllStringSubmatch(string(body), -1) {
+			fields[m[1]] = true
+			for _, part := range strings.Split(m[2], ",") {
+				name, _, _ := strings.Cut(part, "=")
+				if name != "" && !notARule[name] {
+					rules[name] = true
+				}
+			}
+		}
+	}
+	if len(fields) == 0 {
+		t.Fatalf("没从 %d 个 handler 文件里解析出字段，本用例的正则或 tag 写法变了", len(paths))
+	}
+
+	labelBody, err := os.ReadFile(filepath.Join("..", "..", "..", "web", "src", "lib", "i18n", "errors.ts"))
+	if err != nil {
+		t.Skipf("跳过：读不到 errors.ts（%v）。该用例需要完整的仓库布局。", err)
+	}
+	labeled := map[string]bool{}
+	for _, m := range regexp.MustCompile(`'field\.([A-Za-z0-9_]+)'`).FindAllStringSubmatch(string(labelBody), -1) {
+		labeled[m[1]] = true
+	}
+
+	dicts := map[string]string{}
+	for _, name := range []string{"zh-CN.ts", "en-US.ts"} {
+		path := filepath.Join("..", "..", "..", "web", "src", "lib", "i18n", name)
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Skipf("跳过：读不到前端字典 %s（%v）。该用例需要完整的仓库布局。", path, err)
+		}
+		dicts[name] = string(body)
+	}
+
+	want := make([]string, 0, len(fields))
+	for f := range fields {
+		want = append(want, f)
+	}
+	sort.Strings(want)
+
+	for _, f := range want {
+		if !labeled[f] {
+			t.Errorf("lib/i18n/errors.ts 的 fieldLabelKeys 缺字段 %q（后端会报 field.%s）", f, f)
+		}
+		for name, body := range dicts {
+			if !strings.Contains(body, "'field."+f+"'") {
+				t.Errorf("%s 缺文案键 %q", name, "field."+f)
+			}
+		}
+	}
+
+	wantRules := make([]string, 0, len(rules))
+	for r := range rules {
+		wantRules = append(wantRules, r)
+	}
+	sort.Strings(wantRules)
+
+	for _, r := range wantRules {
+		for name, body := range dicts {
+			if !strings.Contains(body, "'validation."+r+"'") {
+				t.Errorf("%s 缺文案键 %q", name, "validation."+r)
 			}
 		}
 	}

@@ -5,7 +5,8 @@
   import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '$lib/components/ui/card'
   import { Input } from '$lib/components/ui/input'
   import { Label } from '$lib/components/ui/label'
-  import { t, tKey } from '$lib/i18n/index.svelte'
+  import { fieldErrorOf } from '$lib/i18n/errors'
+  import { t } from '$lib/i18n/index.svelte'
   import { notifyError, notifySuccess } from '$lib/stores/notify.svelte'
   import { bootstrap, session } from '$lib/stores/session.svelte'
 
@@ -14,17 +15,6 @@
 
   function errKey(err: unknown): string {
     return err instanceof ApiError ? err.key : 'error.internal'
-  }
-
-  /** 把字段级校验错误渲染成文案。后端只给 field/rule/param。 */
-  function fieldError(errors: FieldError[], field: string): string | null {
-    const fe = errors.find((e) => e.field === field)
-    if (!fe) return null
-    return tKey(`validation.${fe.rule}`, {
-      field: tKey(`field.${field}`),
-      param: fe.param ?? '',
-      rule: fe.rule,
-    })
   }
 
   // ---- 基本资料 ----
@@ -125,22 +115,22 @@
           <div class="grid gap-1.5">
             <Label for="p-nickname">{t('user.nickname')}</Label>
             <Input id="p-nickname" bind:value={nickname} maxlength={128} />
-            {#if fieldError(profileErrors, 'nickname')}
-              <p class="text-sm text-destructive">{fieldError(profileErrors, 'nickname')}</p>
+            {#if fieldErrorOf(profileErrors, 'nickname')}
+              <p class="text-sm text-destructive">{fieldErrorOf(profileErrors, 'nickname')}</p>
             {/if}
           </div>
           <div class="grid gap-1.5">
             <Label for="p-mobile">{t('user.mobile')}</Label>
             <Input id="p-mobile" bind:value={mobile} maxlength={20} />
-            {#if fieldError(profileErrors, 'mobile')}
-              <p class="text-sm text-destructive">{fieldError(profileErrors, 'mobile')}</p>
+            {#if fieldErrorOf(profileErrors, 'mobile')}
+              <p class="text-sm text-destructive">{fieldErrorOf(profileErrors, 'mobile')}</p>
             {/if}
           </div>
           <div class="grid gap-1.5">
             <Label for="p-email">{t('user.email')}</Label>
             <Input id="p-email" type="email" bind:value={email} maxlength={64} />
-            {#if fieldError(profileErrors, 'email')}
-              <p class="text-sm text-destructive">{fieldError(profileErrors, 'email')}</p>
+            {#if fieldErrorOf(profileErrors, 'email')}
+              <p class="text-sm text-destructive">{fieldErrorOf(profileErrors, 'email')}</p>
             {/if}
           </div>
           <div class="flex justify-end">
@@ -160,8 +150,8 @@
           <div class="grid gap-1.5">
             <Label for="p-old">{t('profile.oldPassword')}</Label>
             <Input id="p-old" type="password" bind:value={oldPassword} required maxlength={72} />
-            {#if fieldError(passwordErrors, 'old_password')}
-              <p class="text-sm text-destructive">{fieldError(passwordErrors, 'old_password')}</p>
+            {#if fieldErrorOf(passwordErrors, 'old_password')}
+              <p class="text-sm text-destructive">{fieldErrorOf(passwordErrors, 'old_password')}</p>
             {/if}
           </div>
           <div class="grid gap-1.5">
@@ -174,8 +164,8 @@
               minlength={8}
               maxlength={72}
             />
-            {#if fieldError(passwordErrors, 'new_password')}
-              <p class="text-sm text-destructive">{fieldError(passwordErrors, 'new_password')}</p>
+            {#if fieldErrorOf(passwordErrors, 'new_password')}
+              <p class="text-sm text-destructive">{fieldErrorOf(passwordErrors, 'new_password')}</p>
             {/if}
           </div>
           <div class="grid gap-1.5">
