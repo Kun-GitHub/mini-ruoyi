@@ -33,6 +33,8 @@ type Deps struct {
 	Perm    *handler.PermHandler
 	Job     *handler.JobHandler
 	File    *handler.FileHandler
+	Profile *handler.ProfileHandler
+	Monitor *handler.MonitorHandler
 	Session *handler.SessionHandler
 	Log     *handler.LogHandler
 	// OperLog 由 service.LogService 实现，用于记录写操作审计
@@ -118,6 +120,10 @@ func NewRouter(deps Deps) (*gin.Engine, *RouteTable, error) {
 	// ---- 仅需登录（操作自己的数据） ----
 	reg.self(http.MethodGet, "/auth/me", deps.Auth.Me)
 	reg.self(http.MethodPost, "/auth/logout", deps.Auth.Logout)
+	// 「改自己的东西」不需要权限码：任何能登录的账号都该能改自己的密码和资料。
+	// 用 self 而不是 protect，是为了让没有管理权限的账号也有自助能力。
+	reg.self(http.MethodPut, "/profile", deps.Profile.Update)
+	reg.self(http.MethodPut, "/profile/password", deps.Profile.ChangePassword)
 
 	// ---- 菜单 ----
 	reg.protect(http.MethodGet, "/menus", perm.SystemMenuList, deps.Menu.Tree)
@@ -164,6 +170,7 @@ func NewRouter(deps Deps) (*gin.Engine, *RouteTable, error) {
 	reg.protect(http.MethodDelete, "/files/:id", perm.ToolFileDelete, deps.File.Delete)
 
 	// ---- 系统监控 ----
+	reg.protect(http.MethodGet, "/system", perm.MonitorSystemList, deps.Monitor.System)
 	reg.protect(http.MethodGet, "/sessions", perm.MonitorSessionList, deps.Session.List)
 	reg.protect(http.MethodDelete, "/sessions/:hash", perm.MonitorSessionKick, deps.Session.Kill)
 	// 强退挂在用户下：入口在用户列表上，不在会话列表里

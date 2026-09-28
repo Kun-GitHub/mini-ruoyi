@@ -51,27 +51,16 @@ make dev-web               # 终端 2：Vite dev server :5173，/api 和 /health
 └── data.db             # SQLite 数据库，首次启动自动创建或使用随附的初始库
 ```
 
-`systemd` unit：
+systemd unit 与 nginx 配置都在仓库里，可直接用：
 
-```ini
-[Unit]
-Description=mini-ruoyi
-After=network.target
-
-[Service]
-Type=simple
-User=mini-ruoyi
-WorkingDirectory=/opt/mini-ruoyi
-ExecStart=/opt/mini-ruoyi/mini-ruoyi
-Environment=APP_ADDR=:8080
-Environment=APP_DB_PATH=/opt/mini-ruoyi/data.db
-Restart=on-failure
-# 1G 内存的机器上限制 Go 堆上限，避免被 OOM Killer 干掉
-Environment=GOMEMLIMIT=700MiB
-
-[Install]
-WantedBy=multi-user.target
+```bash
+sudo cp deploy/mini-ruoyi.service /etc/systemd/system/
 ```
+
+unit 里已经设好 `GOMEMLIMIT=700MiB` / `GOGC=50` / `GOMAXPROCS=1`——
+**不要删**，否则 GC 会一路吃到机器上限被 OOM Killer 干掉，症状是「进程莫名重启」。
+
+完整的部署、备份、升级、排查见 [docs/deployment.md](docs/deployment.md)。
 
 前端目录按以下顺序查找，取第一个含 `index.html` 的：
 
@@ -203,6 +192,7 @@ make clean       清理 bin/ 和 web/dist
 | 文档 | 内容 |
 | --- | --- |
 | [docs/schema.md](docs/schema.md) | **数据库 Schema**：表与字段定义、DDL、权限模型、字段取舍决策记录 |
+| [docs/deployment.md](docs/deployment.md) | **部署与运维**：systemd、nginx、备份恢复、升级、排查 |
 | [docs/architecture.md](docs/architecture.md) | 整体架构：进程模型、前后端契约、关键决策与权衡 |
 | [docs/architecture-server.md](docs/architecture-server.md) | 后端架构：分层、中间件链、响应契约、数据层、迁移 |
 | [docs/architecture-web.md](docs/architecture-web.md) | 前端架构：响应式、i18n、与后端的集成方式 |
@@ -232,7 +222,5 @@ make clean       清理 bin/ 和 web/dist
 
 ## 许可证
 
-Apache License 2.0。
+[MIT](LICENSE)
 
-> ⚠️ 仓库中多个文件头部声明"许可证见 LICENSE 文件"，但仓库当前**没有 LICENSE 文件**，
-> 需要补上（见 [docs/architecture.md](docs/architecture.md) 的待办清单）。

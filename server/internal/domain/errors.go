@@ -42,6 +42,10 @@ var (
 	// ErrInvalidPermCode 提交了代码未声明的权限码，映射成 400。
 	ErrInvalidPermCode = errors.New("unknown permission code")
 
+	// ErrWrongOldPassword 修改自己的密码时旧密码不对，映射成 400。
+	// 与「重置他人密码」不同：那条路不需要旧密码，所以也不会出现这个错误。
+	ErrWrongOldPassword = errors.New("wrong old password")
+
 	// ErrFileTooLarge 单个文件超过上限，映射成 413。
 	ErrFileTooLarge = errors.New("file too large")
 	// ErrQuotaExceeded 总容量超过配额，映射成 413。

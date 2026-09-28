@@ -338,6 +338,27 @@ Playwright 定位器的自动重试只重新求值 DOM，不会重新发请求�
 `config.yaml` 进 `.gitignore`（含监听地址、代理地址这类逐部署不同的信息），
 提交的样例是 `server/config/config.example.yaml`。
 
+## 5.6 运行状态采集为什么不引第三方库
+
+服务监控读的是 CPU / 内存 / 磁盘 / 进程，全部用标准库直接读 `/proc` 与 `Statfs`，
+没有引入 `gopsutil` 这类库。理由：
+
+- 需要的字段只有十来个，`/proc/stat`、`/proc/meminfo`、`/proc/self/statm` 各解析一行就够
+- 这类库为了跨平台会带一大堆平台实现，而本项目的部署目标是 Linux
+
+**代价是 macOS 上读不到 CPU 与内存**（没有 `/proc`）。处理方式是每个指标都带
+`available` 标记，读不到就返回 `available: false`，让界面明说「本平台读不到该指标」。
+
+这一条是刻意的：**返回 0 会被当成「负载很低」，比没有更糟**。
+
+两个实现细节：
+
+| 细节 | 为什么 |
+| --- | --- |
+| CPU 使用率取两次 `/proc/stat` 的差值（间隔 200ms） | 累计值只能算出「开机至今的平均值」，对排查当前状况没有意义 |
+| 内存用 `MemAvailable` 而不是 `MemFree` | `MemFree` 不含可回收的页缓存，照它判断会以为内存快满了 |
+| 进程 RSS 读 `/proc/self/statm` 而不是 `syscall.Getrusage` | 后者的 `Maxrss` 在 Linux 是 KB、在 macOS 是字节，同一字段两种单位早晚算错 |
+
 ## 6. 错误键清单
 
 后端定义于 `server/internal/httpx/response.go`，前端字典在 `web/src/lib/i18n/zh-CN.ts`。
@@ -357,6 +378,7 @@ error.duplicate             error.invalidPermCode
 error.cannotKickSelf        error.frontendDisabled
 error.invalidJobCron        error.fileTooLarge
 error.quotaExceeded         error.invalidFile
+error.wrongOldPassword
 # 以下两个仅由前端产生，后端不会返回：
 error.network               # fetch 抛异常：没有任何东西应答
 error.backendUnreachable    # 有响应但不是信封：请求被代理拦下，或后端没启动
@@ -393,7 +415,6 @@ error.backendUnreachable    # 有响应但不是信封：请求被代理拦下�
 
 | 项 | 说明 |
 | --- | --- |
-| **LICENSE 文件缺失** | 多个文件头部声明"许可证见 LICENSE 文件"，但仓库没有该文件。要么补上 Apache 2.0 全文，要么去掉声明 |
 | 表结构设计 | ~~待设计~~ **已完成**，见 [schema.md](schema.md) |
 | 初始数据库可复现 | 目前 `server/data.db` 随仓库分发。最终应改为从 `migrations/` + 种子 SQL 重新生成，而不是手工改库后提交 |
 | 字体体积 | Inter 可变字体包含全部子集，`dist` 里 woff2 共 224 KB。若只面向中英文可裁剪为 latin + latin-ext |

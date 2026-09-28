@@ -91,6 +91,19 @@ func (r *SessionRepository) Count(ctx context.Context) (int64, error) {
 	return n, err
 }
 
+// DeleteByUserExcept 踢掉某用户除 keep 之外的全部会话。
+//
+// 用于「修改自己的密码」：当前这条要留着，否则用户改完密码立刻被登出，
+// 他会以为改失败了。其他会话必须踢掉——改密码的常见动机就是「怀疑密码泄露」。
+func (r *SessionRepository) DeleteByUserExcept(ctx context.Context, userID int64, keepTokenHash string) (int64, error) {
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM sys_sessions WHERE user_id = ? AND token_hash <> ?`, userID, keepTokenHash)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 // DeleteByUser 踢掉某个用户的全部会话。修改密码或停用账号后应当调用它。
 func (r *SessionRepository) DeleteByUser(ctx context.Context, userID int64) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM sys_sessions WHERE user_id = ?`, userID)

@@ -226,6 +226,15 @@ func (s *SessionService) CleanupExpired(ctx context.Context) (int64, error) {
 	return n, nil
 }
 
+// RevokeOthers 踢掉某用户除 keepTokenHash 之外的全部会话，返回踢掉几条。
+func (s *SessionService) RevokeOthers(ctx context.Context, userID int64, keepTokenHash string) (int64, error) {
+	n, err := s.sessions.DeleteByUserExcept(ctx, userID, keepTokenHash)
+	if err != nil {
+		return 0, fmt.Errorf("revoke other sessions of user %d: %w", userID, err)
+	}
+	return n, nil
+}
+
 // RevokeUser 踢掉某个用户的全部会话。改密码、停用账号后必须调用。
 func (s *SessionService) RevokeUser(ctx context.Context, userID int64) error {
 	if err := s.sessions.DeleteByUser(ctx, userID); err != nil {

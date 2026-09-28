@@ -22,7 +22,8 @@ server/
     │   ├── migrations/*.sql        # 版本化 DDL
     │   └── device_repository.go    # 单表 CRUD
     ├── service/device_service.go   # 业务规则、事务边界、分页归一化
-    ├── handler/device_handler.go   # HTTP 适配：绑定、校验、响应
+    ├── system/system.go            # 采集 CPU/内存/磁盘/进程（只读 OS 探测，不依赖库）
+    ├── handler/                    # HTTP 适配：绑定、校验、响应
     ├── middleware/middleware.go    # 日志、限流、请求体上限、静态资源缓存头
     └── httpserver/
         ├── router.go               # 路由注册、中间件装配

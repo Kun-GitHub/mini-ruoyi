@@ -86,6 +86,8 @@ cp config/config.example.yaml config/config.yaml   # 可选，不改也能跑
 | POST | `/auth/login` | — **(公开)** | 登录，下发 cookie 与 CSRF 令牌 |
 | GET | `/auth/me` | 仅登录 | 当前用户 + 权限码 + 菜单树 + CSRF 令牌 |
 | POST | `/auth/logout` | 仅登录 | 登出，服务端立即删除会话 |
+| PUT | `/profile` | 仅登录 | 改**自己**的昵称/手机/邮箱。改不了状态——否则等于允许自解禁 |
+| PUT | `/profile/password` | 仅登录 | 改**自己**的密码。需提供旧密码，只踢掉其他会话 |
 | GET | `/menus` | `system:menu:list` | 完整菜单树（含未启用项） |
 | GET | `/menus/:id` | `system:menu:list` | |
 | POST | `/menus` | `system:menu:add` | |
@@ -106,6 +108,7 @@ cp config/config.example.yaml config/config.yaml   # 可选，不改也能跑
 | PUT | `/users/:id/roles` | `system:user:edit` | |
 | PUT | `/users/:id/password` | `system:user:resetPwd` | 重置后**立即踢掉该用户全部会话** |
 | DELETE | `/users/:id` | `system:user:delete` | |
+| GET | `/system` | `monitor:system:list` | 本机 CPU / 内存 / 磁盘 / Go 进程状态 |
 | GET | `/sessions` | `monitor:session:list` | 在线会话（未过期的），最近活跃在前 |
 | DELETE | `/sessions/:hash` | `monitor:session:kick` | 踢掉一条会话，对方下次请求即失效 |
 | DELETE | `/users/:id/sessions` | `monitor:session:kick` | 强退某用户全部会话 |
@@ -119,6 +122,22 @@ cp config/config.example.yaml config/config.yaml   # 可选，不改也能跑
 | PUT | `/jobs/:key` | `tool:job:edit` | 改 cron / 启停，**立即重新调度** |
 | POST | `/jobs/:key/run` | `tool:job:run` | 立即执行一次（异步，结果刷新列表看） |
 | GET | `/healthz` | — **(公开)** | 探活，会真实 Ping 数据库 |
+
+### 「自己」与「他人」是两组接口
+
+| | 改自己的 | 改他人的 |
+| --- | --- | --- |
+| 资料 | `PUT /profile`（仅登录） | `PUT /users/:id`（要 `system:user:edit`） |
+| 密码 | `PUT /profile/password`（仅登录，**需旧密码**） | `PUT /users/:id/password`（要 `system:user:resetPwd`） |
+
+改自己的那两个**不要任何权限码**：初始密码是管理员设的，如果改自己的密码也要
+`system:user:resetPwd`，那一个只授了只读权限的账号连自己的密码都改不了。
+它们走的是 `self` 路由（仅校验登录）。
+
+两处差异是刻意的：
+
+- 改自己密码**必须验旧密码**——否则一个被盗用的会话就能直接改掉密码把机主锁在外面
+- 改自己密码**只踢其他会话**，当前这条保留。改完立刻把自己登出，用户会以为改失败了
 
 ### 登录
 
@@ -171,7 +190,7 @@ curl -b cookie.txt -X DELETE localhost:8080/api/v1/menus/1
 | 403 | `error.forbidden` / `error.protected` / `error.accountDisabled` / `error.cannotDeleteSelf` / `error.cannotKickSelf` / `error.csrfInvalid` |
 | 404 | `error.notFound` |
 | 409 | `error.hasDependents` / `error.lastAdmin` / `error.duplicate` |
-| 400 | `error.invalidJobCron` / `error.invalidFile` |
+| 400 | `error.invalidJobCron` / `error.invalidFile` / `error.wrongOldPassword` |
 | 413 | `error.bodyTooLarge` / `error.fileTooLarge` / `error.quotaExceeded` |
 | 429 | `error.tooManyRequests` |
 | 500 | `error.internal` |

@@ -13,7 +13,7 @@ import (
 //
 // 这里写死而不是动态统计：新增迁移时必须显式改这个数字，
 // 从而强制作者想一想「新迁移是否也该有对应的验证」。
-const migrationCount = 9
+const migrationCount = 10
 
 func TestMigrateCreatesSchemaAndIsIdempotent(t *testing.T) {
 	db, err := NewDB(filepath.Join(t.TempDir(), "migrate.db"))
@@ -100,7 +100,7 @@ func TestSeedRbac(t *testing.T) {
 		kids   int
 	}{
 		{"menu.system", 4},
-		{"menu.monitor", 3},
+		{"menu.monitor", 4},
 		{"menu.tool", 2},
 	} {
 		var childCount int

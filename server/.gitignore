@@ -1,5 +1,5 @@
-# Copyright (c) [2025] Kong All rights reserved.
-# Use of this source code is governed by a Apache 2.0 license that can be found in the LICENSE file.
+# Copyright (c) 2025 Kong
+# Released under the MIT License. See the LICENSE file for details.
 # Author: Kong See：https://github.com/saas-zero/saas-zero or https://gitee.com/saas-zero/saas-zero
 # Email: hot_kun@hotmail.com
 
@@ -34,3 +34,7 @@ config/config.yaml
 
 .vscode/
 vendor/
+
+# 上传的文件本体。默认路径是相对工作目录的 uploads/，
+# 从 server/ 目录启动时就会落在这里。
+uploads/

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -78,6 +79,8 @@ func main() {
 	registry.Register(job.CleanupExpiredSessions(sessionSvc))
 	registry.Register(job.CleanupOldLogs(logSvc))
 
+	monitorSvc := service.NewMonitorService(filepath.Dir(cfg.Database.Path))
+
 	fileSvc, err := service.NewFileService(
 		repository.NewFileRepository(db), cfg.Upload.Dir, cfg.UploadMaxBytes(), cfg.UploadQuotaBytes())
 	if err != nil {
@@ -116,6 +119,8 @@ func main() {
 		Log:     handler.NewLogHandler(logSvc),
 		Job:     handler.NewJobHandler(jobSvc),
 		File:    handler.NewFileHandler(fileSvc),
+		Profile: handler.NewProfileHandler(userSvc),
+		Monitor: handler.NewMonitorHandler(monitorSvc),
 		OperLog: logSvc,
 		User:    handler.NewUserHandler(userSvc),
 		Role:    handler.NewRoleHandler(roleSvc),

@@ -53,6 +53,8 @@ const (
 	KeyCannotKickSelf = "error.cannotKickSelf"
 	// KeyInvalidJobCron cron 表达式无法解析。
 	KeyInvalidJobCron = "error.invalidJobCron"
+	// KeyWrongOldPassword 修改自己密码时旧密码不对。
+	KeyWrongOldPassword = "error.wrongOldPassword"
 	// 上传相关的容量限制。
 	KeyFileTooLarge    = "error.fileTooLarge"
 	KeyQuotaExceeded   = "error.quotaExceeded"
@@ -138,6 +140,7 @@ var errorMapping = []struct {
 	{domain.ErrInvalidParent, http.StatusBadRequest, KeyInvalidParent},
 	{domain.ErrInvalidPermCode, http.StatusBadRequest, KeyInvalidPermCode},
 	{domain.ErrInvalidJobCron, http.StatusBadRequest, KeyInvalidJobCron},
+	{domain.ErrWrongOldPassword, http.StatusBadRequest, KeyWrongOldPassword},
 	// 上传超限用 413：和「请求体过大」同类，客户端据此提示「文件太大」
 	{domain.ErrFileTooLarge, http.StatusRequestEntityTooLarge, KeyFileTooLarge},
 	{domain.ErrQuotaExceeded, http.StatusRequestEntityTooLarge, KeyQuotaExceeded},

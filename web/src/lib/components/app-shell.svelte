@@ -4,7 +4,7 @@
   import { Button } from '$lib/components/ui/button'
   import { NativeSelect } from '$lib/components/ui/native-select'
   import { getLocale, locales, setLocale, t, tKey, type Locale } from '$lib/i18n/index.svelte'
-  import { flattenMenus, navigate, replaceTo, resolveComponent, route } from '$lib/router.svelte'
+  import { builtinRoutes, flattenMenus, navigate, replaceTo, resolveComponent, route } from '$lib/router.svelte'
   import { logout, session } from '$lib/stores/session.svelte'
   import {
     closeAll,
@@ -18,8 +18,9 @@
   // 目录默认展开。菜单树只有一层目录，所以不用做「记住展开状态」那一套。
   let collapsed = $state<Record<number, boolean>>({})
 
-  const flatMenus = $derived(flattenMenus(session.menus))
-  const active = $derived(flatMenus.find((m) => m.path === route.pathname) ?? null)
+  // 可导航的页面 = 菜单里的页面 + 内置页面（个人中心）
+  const routes = $derived([...flattenMenus(session.menus), ...builtinRoutes])
+  const active = $derived(routes.find((m) => m.path === route.pathname) ?? null)
 
   /**
    * 导航到菜单页面时开一个标签。
@@ -36,7 +37,7 @@
 
   $effect(() => {
     const path = route.pathname
-    const menu = flatMenus.find((m) => m.path === path)
+    const menu = routes.find((m) => m.path === path)
 
     if (menu) {
       if (path !== lastOpened) {
@@ -48,9 +49,9 @@
 
     // 首次进入时若路径不在菜单里（登录后落在根路径、或菜单被删了而地址栏留着旧路径），
     // 跳到第一个可访问的页面。只做一次，否则用户关掉全部标签后会被弹回来。
-    if (!redirected && flatMenus.length > 0) {
+    if (!redirected && routes.length > 0) {
       redirected = true
-      replaceTo(flatMenus[0].path)
+      replaceTo(routes[0].path)
     }
   })
 
@@ -147,7 +148,15 @@
           {/each}
         </NativeSelect>
 
-        <span class="text-sm text-muted-foreground">{session.user?.nickname}</span>
+        <!-- 用户名就是去个人中心的入口：改自己密码的地方不该藏在别处 -->
+        <button
+          type="button"
+          data-testid="profile-link"
+          class="rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          onclick={() => navigate('/profile')}
+        >
+          {session.user?.nickname || session.user?.username}
+        </button>
 
         <Button variant="outline" size="sm" onclick={signOut}>{t('nav.logout')}</Button>
       </div>

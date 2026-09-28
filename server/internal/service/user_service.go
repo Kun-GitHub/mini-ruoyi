@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"mini-ruoyi/internal/auth"
 	"mini-ruoyi/internal/domain"
@@ -161,6 +162,62 @@ func (s *UserService) Delete(ctx context.Context, id, currentUserID int64) error
 	}
 	if err := s.repo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("delete user %d: %w", id, err)
+	}
+	return nil
+}
+
+// ChangeOwnPassword 修改自己的密码。
+//
+// 与 ResetPassword（管理员重置他人密码）有两个关键区别：
+//
+//  1. **必须验证旧密码**。否则一个被盗用的会话就能直接改掉密码，
+//     把真正的机主锁在门外——而机主连「谁改的」都查不到。
+//  2. **保留当前会话**，只踢掉其他会话。改完密码立刻把自己登出是很差的体验，
+//     用户第一反应是「改失败了」，然后会用旧密码再试一次。
+func (s *UserService) ChangeOwnPassword(ctx context.Context, userID int64, keepTokenHash, oldPlain, newPlain string) error {
+	user, err := s.repo.GetByID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("get user %d: %w", userID, err)
+	}
+	if !auth.VerifyPassword(user.Password, oldPlain) {
+		return domain.ErrWrongOldPassword
+	}
+
+	hash, err := auth.HashPassword(newPlain)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	if err := s.repo.UpdatePassword(ctx, userID, hash); err != nil {
+		return fmt.Errorf("update password of user %d: %w", userID, err)
+	}
+
+	// 只踢其他会话。改密码的常见动机就是「怀疑密码泄露」，
+	// 留着旧会话等于没改；但当前这条必须留着。
+	n, err := s.sessions.RevokeOthers(ctx, userID, keepTokenHash)
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		log.Printf("用户 %d 改了密码，踢掉了 %d 条其他会话", userID, n)
+	}
+	return nil
+}
+
+// UpdateOwnProfile 修改自己的资料。
+//
+// 只允许改昵称/手机/邮箱。status 从库里读回原值后原样写回——
+// 允许用户改自己的状态，就等于允许他把自己从停用状态解禁。
+func (s *UserService) UpdateOwnProfile(ctx context.Context, userID int64, nickname, mobile, email string) error {
+	user, err := s.repo.GetByID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("get user %d: %w", userID, err)
+	}
+	user.Nickname = nickname
+	user.Mobile = mobile
+	user.Email = email
+
+	if err := s.repo.UpdateProfile(ctx, user); err != nil {
+		return fmt.Errorf("update profile of user %d: %w", userID, err)
 	}
 	return nil
 }

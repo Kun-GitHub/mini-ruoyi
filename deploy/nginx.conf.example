@@ -1,0 +1,68 @@
+# mini-ruoyi 反向代理示例
+#
+# 用途：TLS 终止、或者把前端产物交给 nginx 托管（此时后端可以只跑 API）。
+#
+# ⚠️ 用这份配置就**必须**给后端设 APP_TRUSTED_PROXIES=127.0.0.1，
+#    否则所有请求的来源 IP 都是 127.0.0.1：
+#      · 按 IP 限流退化成全局限流（一个人刷满 20 rps，所有人一起 429）
+#      · 登录日志里的 IP 全是代理地址，审计价值归零
+#    TLS 终止时还要设 APP_SECURE_COOKIE=true。
+
+server {
+    listen 443 ssl http2;
+    server_name admin.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/admin.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/admin.example.com/privkey.pem;
+
+    # ---- 前端 ----
+    # 方式一：由 nginx 托管（后端不必有 web/ 目录）
+    root /opt/mini-ruoyi/web;
+
+    # 带内容哈希的资源：内容变了 URL 就变，可以永久缓存
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        try_files $uri =404;
+    }
+
+    # index.html 必须回源校验。
+    # 否则前端重新构建后，浏览器会继续引用已不存在的旧哈希文件，用户永远更新不了。
+    location / {
+        add_header Cache-Control "no-cache";
+        try_files $uri /index.html;
+    }
+
+    # ---- 后端 ----
+    location /api/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # 文件上传：默认 1m 会在超过这个大小的上传上直接返回 413，
+        # 且报错来自 nginx 而不是应用，日志里看不出是配置问题。
+        # 这个值要不小于后端的 APP_UPLOAD_MAX_MB。
+        client_max_body_size 32m;
+        # 上传大文件时别把请求缓冲到磁盘
+        proxy_request_buffering off;
+    }
+
+    location /healthz {
+        proxy_pass http://127.0.0.1:8080;
+        access_log off;
+    }
+
+    # 方式二：前端也交给 Go 托管（后端需要 web/ 目录）
+    # 那就把上面的 root/try_files 换成一行全量反代：
+    # location / {
+    #     proxy_pass http://127.0.0.1:8080;
+    #     proxy_set_header Host $host;
+    # }
+}
+
+server {
+    listen 80;
+    server_name admin.example.com;
+    return 301 https://$host$request_uri;
+}

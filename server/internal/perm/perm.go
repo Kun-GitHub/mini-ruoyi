@@ -48,6 +48,7 @@ const (
 	ToolFileUpload Code = "tool:file:upload"
 	ToolFileDelete Code = "tool:file:delete"
 
+	MonitorSystemList   Code = "monitor:system:list"
 	MonitorSessionList  Code = "monitor:session:list"
 	MonitorSessionKick  Code = "monitor:session:kick"
 	MonitorLoginLogList Code = "monitor:loginlog:list"
@@ -64,6 +65,7 @@ var all = []Code{
 	ToolJobList, ToolJobEdit, ToolJobRun,
 	ToolFileList, ToolFileUpload, ToolFileDelete,
 
+	MonitorSystemList,
 	MonitorSessionList, MonitorSessionKick,
 	MonitorLoginLogList, MonitorOperLogList,
 }

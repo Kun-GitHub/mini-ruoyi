@@ -1,0 +1,68 @@
+# mini-ruoyi systemd unit
+#
+# 安装：
+#   sudo useradd --system --home /opt/mini-ruoyi --shell /usr/sbin/nologin mini-ruoyi
+#   sudo cp bin/mini-ruoyi /opt/mini-ruoyi/
+#   sudo cp -r bin/web      /opt/mini-ruoyi/
+#   sudo cp deploy/mini-ruoyi.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now mini-ruoyi
+#
+# 二进制和 web/ 必须放在同一个目录：后端默认从「二进制同级目录下的 web/」找前端产物。
+
+[Unit]
+Description=mini-ruoyi admin platform
+Documentation=https://github.com/saas-zero/saas-zero
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mini-ruoyi
+Group=mini-ruoyi
+
+# 工作目录决定 data.db 与 uploads/ 的位置（这两个都相对工作目录解析），
+# 而前端目录是相对二进制解析的 —— 两者故意不同，见 docs/architecture-server.md
+WorkingDirectory=/opt/mini-ruoyi
+ExecStart=/opt/mini-ruoyi/mini-ruoyi
+
+# ---- 1C1G 的关键配置 ----
+# Go 1.19+ 的堆软上限。不设的话 GC 会一路吃到机器内存上限，
+# 最后被 OOM Killer 干掉，而症状是「进程莫名重启」。
+Environment=GOMEMLIMIT=700MiB
+# 更早、更频繁地回收，用一点 CPU 换内存峰值
+Environment=GOGC=50
+# 单核机器上没必要让 runtime 开多个 P
+Environment=GOMAXPROCS=1
+
+# 只监听本机 + 由 nginx 反代时：
+# Environment=APP_ADDR=127.0.0.1:8080
+# 直接对外监听：
+Environment=APP_ADDR=:8080
+
+# 放在 nginx 后面时必须声明代理地址，否则所有请求的来源 IP 都是 127.0.0.1，
+# 按 IP 限流会退化成全局限流（一个人刷满，所有人 429）
+# Environment=APP_TRUSTED_PROXIES=127.0.0.1
+# 前面有 TLS 终止层时打开，否则会话 cookie 会在 HTTP 上明文传输
+# Environment=APP_SECURE_COOKIE=true
+
+Restart=on-failure
+RestartSec=3s
+
+# ---- 加固 ----
+NoNewPrivileges=true
+PrivateTmp=true
+# 只允许写自己的目录：数据库、上传文件、日志
+ProtectSystem=strict
+ReadWritePaths=/opt/mini-ruoyi
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+# 这个 Go 程序不需要创建任何可执行映射
+MemoryDenyWriteExecute=false
+
+[Install]
+WantedBy=multi-user.target

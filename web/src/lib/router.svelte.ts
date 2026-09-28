@@ -23,6 +23,19 @@ export type FlatMenu = {
   icon: string
 }
 
+/**
+ * 内置路由：**不来自菜单**，任何登录用户都能访问。
+ *
+ * 个人中心刻意不做成菜单项：菜单是权限管理的东西（能分配、能禁用），
+ * 而「改自己的密码」是每个账号的基本能力。做成菜单就要给它权限码，
+ * 一个没有任何权限的账号又会变回「什么都不能做」。
+ *
+ * 它们参与路由与标签页的方式和菜单页完全一致，只是来源不同。
+ */
+export const builtinRoutes: FlatMenu[] = [
+  { path: '/profile', titleKey: 'profile.title', component: 'profile', icon: 'user' },
+]
+
 /** 把菜单树压平成一维，只保留有页面组件的项（目录本身不可导航）。 */
 export function flattenMenus(nodes: MenuNode[]): FlatMenu[] {
   const out: FlatMenu[] = []

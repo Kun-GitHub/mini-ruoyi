@@ -138,6 +138,45 @@ export type FilePage = Page<FileItem> & {
   usage: FileUsage
 }
 
+export type SystemSnapshot = {
+  os: string
+  arch: string
+  go_version: string
+  uptime_seconds: number
+  cpu: {
+    /** false 表示本平台读不到（比如 macOS 没有 /proc） */
+    available: boolean
+    cores: number
+    usage_percent: number
+    load_avg: number[] | null
+    load_available: boolean
+  }
+  memory: {
+    available: boolean
+    total: number
+    used: number
+    free: number
+    usage_percent: number
+  }
+  disk: {
+    path: string
+    available: boolean
+    total: number
+    used: number
+    free: number
+    usage_percent: number
+  }
+  process: {
+    goroutines: number
+    heap_alloc: number
+    heap_sys: number
+    sys: number
+    num_gc: number
+    rss_available: boolean
+    rss: number
+  }
+}
+
 export type Job = {
   status: 'active' | 'inactive'
   job_key: string

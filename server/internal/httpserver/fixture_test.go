@@ -58,6 +58,8 @@ func testDeps(t *testing.T, webDir string) Deps {
 	registry.Register(job.CleanupExpiredSessions(sessionSvc))
 	registry.Register(job.CleanupOldLogs(logSvc))
 
+	monitorSvc := service.NewMonitorService(t.TempDir())
+
 	fileSvc, err := service.NewFileService(
 		repository.NewFileRepository(db), filepath.Join(t.TempDir(), "uploads"), 1<<20, 4<<20)
 	if err != nil {
@@ -85,6 +87,8 @@ func testDeps(t *testing.T, webDir string) Deps {
 		Log:     handler.NewLogHandler(logSvc),
 		Job:     handler.NewJobHandler(jobSvc),
 		File:    handler.NewFileHandler(fileSvc),
+		Profile: handler.NewProfileHandler(userSvc),
+		Monitor: handler.NewMonitorHandler(monitorSvc),
 		OperLog: logSvc,
 		User:    handler.NewUserHandler(userSvc),
 		Role:    handler.NewRoleHandler(roleSvc),
