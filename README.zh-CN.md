@@ -74,7 +74,7 @@ unit 里已经设好 `GOMEMLIMIT=700MiB` / `GOGC=50` / `GOMAXPROCS=1`——
 
 > ⚠️ **用 GoLand / VS Code 直接运行 `cmd/server` 时**：二进制在临时目录、工作目录是 `server/`，
 > 早期版本只找「二进制同级」会找不到前端，然后**静默降级成纯 API 模式**——
-> 表现为「打开 :8080 看到一句 `{"code":1,"msg":"error.notFound"}`」。
+> 表现为「打开 :8080 看到一句 `{"code":404,"msg":"error.notFound"}`」。
 > 现在会命中 `../bin/web`；若仍未命中，日志会明确告诉你执行 `make build` 或设置 `APP_WEB_DIR`。
 
 **更新前端不需要重启后端**：重新执行 `make web`，把 `dist/` 内容同步到服务器的 `web/` 目录，用户刷新页面就能拿到新版本。
@@ -187,7 +187,12 @@ make run         构建后直接启动
 make dev-server  启动后端（go run）
 make dev-web     启动 Vite dev server
 make clean       清理 bin/ 和 web/dist
+make db-clean    清掉 server/data.db 里开发期产生的数据，提交前跑一次（见下）
 ```
+
+⚠️ **`server/data.db` 既是随仓库分发的种子库，也是开发时的活数据库。** 从 `server/` 启动后端并登录一次，
+会话和日志就写进去了，提交时一起带上——表现是「别人 clone 下来，在线会话里却有你的 5 条记录」。
+**提交前跑一次 `make db-clean`。**（需要 `sqlite3` 命令行工具；运行本项目本身不需要。）
 
 ## 文档
 

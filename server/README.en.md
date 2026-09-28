@@ -21,7 +21,7 @@ go run ./cmd/server
 
 # verify
 curl localhost:8080/healthz
-# {"code":0,"msg":"ok","data":{"status":"up"}}
+# {"code":200,"msg":"ok","data":{"status":"up"}}
 ```
 
 Building the complete artifact (frontend included) from the repository root:
@@ -31,10 +31,19 @@ make build && make run       # the binary and the frontend output land in bin/
 ```
 
 At startup any unapplied migrations run automatically and `data.db` is created if it does not exist.
+
 The `data.db` that ships in the repository is an **already initialized** database: every migration is recorded
-(`0002`–`0011` all applied) and it carries development-period data (2 users / 2 roles / 13 menus / 1 permission grant /
-3 jobs), so it works out of the box. Once the feature work is finished it will be removed and rebuilt from
-`migrations/` + seed SQL.
+(`0002`–`0011` all applied) and its contents are identical to a freshly migrated one — one `admin` user, one built-in
+role, 13 menus and 3 jobs, with **no sessions, no logs and no test accounts**. It works out of the box.
+
+⚠️ **This same database is also the live development database** (when you start the backend from `server/`,
+`database.path` points at it). A single login writes sessions and logs into it, and they get committed along with
+everything else — which shows up as "I cloned this and the online-sessions page lists someone else's records".
+Run **`make db-clean`** before committing to restore it.
+
+The eventual fix is to rebuild it from `migrations/` + seed SQL (see
+[../docs/architecture.en.md](../docs/architecture.en.md) §8); at that point the database goes away and so does this
+caveat.
 
 ## Configuration
 
@@ -156,7 +165,7 @@ curl -c cookie.txt -X POST localhost:8080/api/v1/auth/login \
 ```
 
 ```json
-{"code":0,"msg":"ok","data":{
+{"code":200,"msg":"ok","data":{
   "user":{"id":1,"username":"admin","nickname":"管理员", ...},
   "is_admin":true,
   "perms":["system:menu:add", "..."],
@@ -179,7 +188,7 @@ curl -b cookie.txt -X DELETE localhost:8080/api/v1/menus/1
 ```
 
 ```json
-{"code":1,"msg":"error.hasDependents",
+{"code":409,"msg":"error.hasDependents",
  "data":{"child_menus":3,"affected_roles":2}}
 ```
 

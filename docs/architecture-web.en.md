@@ -185,13 +185,16 @@ a validation field and forget the copy, and `make test` goes red.
 The backend always returns (details in [architecture.en.md](architecture.en.md)):
 
 ```jsonc
-{ "code": 0, "msg": "ok", "data": {...} }
-{ "code": 1, "msg": "error.validationFailed", "errors": [{ "field", "rule", "param" }] }
+{ "code": 200, "msg": "ok", "data": {...} }
+{ "code": 400, "msg": "error.validationFailed", "errors": [{ "field", "rule", "param" }] }
 ```
 
 How the frontend consumes it:
 
-- Success is decided by the **HTTP status code** (`res.ok`); `code` is a redundant flag
+- Success is decided by the **HTTP status code** (`res.ok`), never by `code`
+- `code` is used only to discriminate "is this our envelope": if it is not a number the client reports
+  `error.backendUnreachable` (the Vite proxy returns 502 with an empty body when the backend is down, and this is what
+  separates that from "the backend errored")
 - On failure `msg` is an i18n key, rendered directly through `t(msg)`
 - When `errors[]` is present, the corresponding form fields are highlighted
 
@@ -457,12 +460,15 @@ web/dist/assets/*     →  /assets/*, Cache-Control: immutable
 | File | Raw | gzip |
 | --- | --- | --- |
 | `index.html` | 0.5 KB | 0.3 KB |
-| `assets/index-*.css` | 43.6 KB | 8.5 KB |
-| `assets/index-*.js` | 314 KB | **90 KB** |
-| `assets/*.woff2` (every Inter variable subset) | 218 KB | — |
-| Total (12 files) | 592 KB | — |
+| `assets/index-*.css` | 42.6 KB | 8.2 KB |
+| `assets/index-*.js` | 307 KB | **88 KB** |
+| `assets/*.woff2` (every Inter variable subset) | 213 KB | — |
+| Total (12 files) | 578 KB | — |
 
 The font is the largest single piece. For Chinese and English only it could be trimmed to the latin + latin-ext subsets.
+
+These numbers come from a fresh `make web`. **They drift a little with every build** (the content hashes in the filenames
+change each time), so use them to judge the magnitude and which piece dominates — not as an exact baseline to diff against.
 
 ## 8. Development workflow
 
@@ -493,7 +499,7 @@ Three layers, each with its own job:
 | Layer | Command | Coverage |
 | --- | --- | --- |
 | Types and templates | `npm run check` | svelte-check + tsc |
-| Interface contract | `make test` | the backend's 114 cases (all correctness unrelated to CGO lives here) |
+| Interface contract | `make test` | the backend's 115 cases (all correctness unrelated to CGO lives here) |
 | Real interaction | `make test-e2e` | Playwright + Chromium, 11 specs / 77 cases |
 
 E2E goes through `webServer`, which automatically starts **a backend on a temporary database**, clearing it before every

@@ -21,7 +21,7 @@ go run ./cmd/server
 
 # 验证
 curl localhost:8080/healthz
-# {"code":0,"msg":"ok","data":{"status":"up"}}
+# {"code":200,"msg":"ok","data":{"status":"up"}}
 ```
 
 从仓库根目录构建完整产物（含前端）：
@@ -31,9 +31,17 @@ make build && make run       # 二进制与前端产物落在 bin/
 ```
 
 启动时会自动执行未应用的迁移，并创建 `data.db`（若不存在）。
+
 仓库自带的 `data.db` 是**已经初始化好**的库：迁移记录齐全（`0002`–`0011` 全部已应用），
-并且带着开发期的数据（2 个用户 / 2 个角色 / 13 个菜单 / 1 条权限授权 / 3 个任务），开箱即用。
-功能开发完成后它会被移除，改为从 `migrations/` + 种子 SQL 重建。
+内容与「刚跑完迁移」完全一致——1 个 `admin` 用户 / 1 个内置角色 / 13 个菜单 / 3 个任务，
+**没有任何会话、日志或测试账号**，开箱即用。
+
+⚠️ **这个库同时是开发时的活数据库**（从 `server/` 启动后端时 `database.path` 就是它）。
+登录一次就会写进会话与日志，提交时会一起带上——表现是「别人 clone 下来，在线会话里却有你的记录」。
+**提交前跑一次 `make db-clean`** 即可还原。
+
+最终方案是从 `migrations/` + 种子 SQL 重新生成（见 [../docs/architecture.md](../docs/architecture.md) §8），
+那时这个库会被移除，也就不再需要这条注意事项。
 
 ## 配置
 
@@ -152,7 +160,7 @@ curl -c cookie.txt -X POST localhost:8080/api/v1/auth/login \
 ```
 
 ```json
-{"code":0,"msg":"ok","data":{
+{"code":200,"msg":"ok","data":{
   "user":{"id":1,"username":"admin","nickname":"管理员", ...},
   "is_admin":true,
   "perms":["system:menu:add", "..."],
@@ -175,7 +183,7 @@ curl -b cookie.txt -X DELETE localhost:8080/api/v1/menus/1
 ```
 
 ```json
-{"code":1,"msg":"error.hasDependents",
+{"code":409,"msg":"error.hasDependents",
  "data":{"child_menus":3,"affected_roles":2}}
 ```
 

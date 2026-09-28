@@ -61,16 +61,32 @@ reload and the backend stay out of each other's way.
 
 ```jsonc
 {
-  "code": 200,                       // 0 = success, 1 = failure
+  "code": 200,                     // always equals the HTTP status code
   "msg":  "ok",                    // "ok" on success; an i18n key on failure (see §6)
   "data": { },                     // present only on success
   "errors": [ ]                    // present only when field-level validation failed
 }
 ```
 
-**Semantics are carried by the HTTP status code**; `code` is only a success/failure flag and never restates the status.
-This is a deliberate departure from upstream RuoYi (which always returns HTTP 200 with `code: 200/500`) — keeping HTTP
-semantics means curl, logs, monitoring and gateways can all read the error rate directly, without parsing the body.
+**Semantics are carried by the HTTP status code**, and `code` is always that same status code (`write()` sets it; callers
+never touch it). This is a deliberate departure from upstream RuoYi (which always returns HTTP 200 with
+`code: 200/500`) — keeping HTTP semantics means curl, logs, monitoring and gateways can all read the error rate
+directly, without parsing the body.
+
+**Why `code` duplicates the status instead of being 0/1:** Go's `int` zero value is 0 and the `Code` field has no
+`omitempty`, so using 0 for success means any new code path that **forgets to set `Code`** silently reports success.
+Measured:
+
+```go
+json.Marshal(Response{Msg: "ok", Data: x})   // forgot to set Code
+→ {"code":0,"msg":"ok",...}                // the frontend sees success
+```
+
+Using the status code makes the zero value 0 **impossible to be a legal value** — forgetting to set it fails loudly.
+
+`code`'s only consumer is the **envelope discriminator** (see [architecture-web.en.md](architecture-web.en.md) §5.4):
+the frontend uses it to tell "this is our response" from "a proxy answered instead". Success is decided by the HTTP
+status, not by `code`.
 
 | Case | HTTP | `msg` |
 | --- | --- | --- |
@@ -111,7 +127,7 @@ The backend only reports "which field, which rule, what the rule's parameter was
 
 ```json
 {
-  "code": 1,
+  "code": 400,
   "msg": "error.validationFailed",
   "errors": [
     { "field": "name",     "rule": "min",      "param": "2" },
@@ -129,7 +145,7 @@ The backend only reports "which field, which rule, what the rule's parameter was
 
 Any new endpoint has to preserve these:
 
-1. The response body always has `code` and `msg`
+1. The response body always has `code` and `msg`, and `code` always equals the HTTP status code (enforced by `httpx.write()`)
 2. A failing response's `msg` is always an i18n key and **never contains natural language** (otherwise the frontend cannot translate it)
 3. `data.list` is `[]` rather than `null` for an empty result (otherwise the frontend has to special-case it)
 4. List endpoints use the fixed pagination shape `{list, total, page, page_size}`, where:
@@ -148,11 +164,11 @@ into a dialog, and after confirmation the request is re-sent with `?cascade=true
 ```
 DELETE /api/v1/menus/5
 → 409 Conflict
-  {"code":1,"msg":"error.hasDependents",
+  {"code":409,"msg":"error.hasDependents",
    "data":{"child_menus":3,"affected_roles":2}}
 
 DELETE /api/v1/menus/5?cascade=true
-→ 200 {"code":0,"msg":"ok","data":{"id":5}}
+→ 200 {"code":200,"msg":"ok","data":{"id":5}}
 ```
 
 The impact each resource reports:
@@ -199,7 +215,7 @@ version" true.
 | **SQLite as the only data source** | Support MySQL + SQLite at once | Two data sources means two sets of DDL, two SQL dialects, a doubled test matrix and MySQL in CI. Under a "minimal" goal that cost buys nothing |
 | **`modernc.org/sqlite`** | `mattn/go-sqlite3` (CGO) | Pure Go, so `GOOS/GOARCH` cross-compilation needs no toolchain. Roughly half the performance of the CGO build — entirely sufficient for a single-machine admin panel |
 | **No ORM** | GORM / Ent / sqlc | An admin panel runs single-digit QPS, so an ORM's reflection and code generation earn little; hand-written SQL is easier to debug and fits "minimal" |
-| **HTTP semantic status codes** | RuoYi-style always-200 | See §3.1 |
+| **HTTP semantic status codes** | RuoYi-style always-200 + `code: 200/500` | See §3.1. `code` duplicates the status rather than being 0/1: Go's `int` zero value is 0, so using 0 for success makes a forgotten `Code` assignment silently mean success |
 | **The backend emits only i18n keys** | The backend emits text based on `Accept-Language` | The text only has to exist in one place (the frontend, where the UI lives); switching language needs no new request; and the backend stays language-neutral, so users of any locale can use it |
 | **Hand-written frontend i18n** | svelte-i18n / paraglide-js | Two locales and a small message count make a runtime library's dynamic loading and formatting plugins pointless; the hand-written version uses TypeScript types to make a missing key a compile error |
 | **Versioned migrations** | `CREATE TABLE IF NOT EXISTS` | The latter cannot alter a table, which amounts to "hand-edit the database after release" |
@@ -227,7 +243,7 @@ make dev-web      # Vite on :5173, proxying /api and /healthz to :8080
 ```
 
 Opening `http://localhost:8080/` at this point shows
-`{"code":1,"msg":"error.frontendDisabled"}` — **that is expected**: it states plainly that "the backend is in API-only
+`{"code":404,"msg":"error.frontendDisabled"}` — **that is expected**: it states plainly that "the backend is in API-only
 mode and no frontend is deployed", rather than leaving you to think the service is broken.
 
 **Shape 3** (nginx serves the frontend):
@@ -416,14 +432,23 @@ error.cannotKickSelf        error.frontendDisabled
 error.invalidJobCron        error.fileTooLarge
 error.quotaExceeded         error.invalidFile
 error.wrongOldPassword
-# the next two are produced by the frontend only; the backend never returns them:
+# the next two are produced by the frontend only (web/src/lib/api/client.ts); the backend never returns them:
 error.network               # fetch threw: nothing answered at all
 error.backendUnreachable    # something answered but it was not the envelope: a proxy intercepted it, or the backend is not running
 ```
 
-These keys are defined only in `server/internal/httpx/response.go`, with the text in the frontend dictionary.
-`internal/httpx` and `internal/perm` each have a test that reads the frontend dictionary to confirm the two have not
-drifted apart — otherwise the UI would show the raw key name, `error.notFound`, to users.
+Apart from the last two, these keys are defined in `server/internal/httpx/response.go`, with the text in the frontend
+dictionary. The two sides are coupled by string convention, so a missing entry does not raise an error — the UI just
+shows the raw key name, `error.notFound`, to users. Two tests guard this:
+
+| Test | Scans |
+| --- | --- |
+| `TestFrontendDictCoversErrorKeys` | the key constants in the backend's `response.go` |
+| `TestFrontendGeneratedErrorKeysAreTranslated` | the key literals hardcoded in the frontend's `client.ts` |
+
+Both are needed. `error.backendUnreachable` also has a constant on the backend (it is what forces the frontend
+dictionary to register it; the backend itself never returns it), so the first test covers it. But **`error.network`
+has no constant anywhere on the backend**, so only the second test can catch it.
 
 ## 7. Design trade-offs under 1C1G
 
@@ -445,7 +470,7 @@ remains.
 
 | Item | Notes |
 | --- | --- |
-| A reproducible initial database | `server/data.db` currently ships in the repository (carrying development-period data on top). The end state should be regenerating it from `migrations/` + seed SQL rather than committing a hand-edited database |
+| A reproducible initial database | `server/data.db` currently ships in the repository. It doubles as the live development database, so a single login writes sessions and logs into it — run `make db-clean` before committing. The end state is to regenerate it from `migrations/` + seed SQL and stop shipping a database at all |
 | Font size | The Inter variable font carries every subset, for 218 KB of woff2 in `dist`. Restricted to Chinese and English it could be trimmed to latin + latin-ext |
 
 Frontend-side to-dos are in [architecture-web.en.md](architecture-web.en.md) §9, backend-side ones under "Not implemented

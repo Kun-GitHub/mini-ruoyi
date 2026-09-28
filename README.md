@@ -76,7 +76,7 @@ You can also set it explicitly with `APP_WEB_DIR`.
 
 > ⚠️ **When running `cmd/server` straight from GoLand / VS Code**: the binary sits in a temp directory and the working
 > directory is `server/`. Early versions only looked next to the binary, failed to find the frontend, and then
-> **silently fell back to API-only mode** — you would open :8080 and see `{"code":1,"msg":"error.notFound"}`.
+> **silently fell back to API-only mode** — you would open :8080 and see `{"code":404,"msg":"error.notFound"}`.
 > That now resolves through `../bin/web`; if it still misses, the log tells you to run `make build` or set `APP_WEB_DIR`.
 
 **Updating the frontend does not require a backend restart**: run `make web` again, sync the contents of `dist/` to the
@@ -192,7 +192,13 @@ make run         build, then start
 make dev-server  start the backend (go run)
 make dev-web     start the Vite dev server
 make clean       remove bin/ and web/dist
+make db-clean    strip dev data from server/data.db — run before committing (see below)
 ```
+
+⚠️ **`server/data.db` is both the shipped seed database and the live development database.** Start the backend from
+`server/` and log in once, and sessions plus logs are written into it — they get committed along with everything else,
+which shows up as "I cloned this and the online-sessions page lists someone else's records". Run `make db-clean`
+before committing. (It needs the `sqlite3` CLI; running the project itself does not.)
 
 ## Documentation
 

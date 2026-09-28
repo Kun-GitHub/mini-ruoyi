@@ -43,8 +43,13 @@ const (
 	KeyUnauthorized     = "error.unauthorized"
 	KeyForbidden        = "error.forbidden"
 	KeyCSRFInvalid      = "error.csrfInvalid"
-	// KeyBackendUnreachable 表示响应不是本服务的信封格式——请求被代理/网关拦下，
-	// 或者后端进程根本没起来。前端据此报「无法连接后端」，而不是笼统的 error.internal。
+	// KeyBackendUnreachable 表示「响应不是本服务的信封格式」——请求被代理/网关拦下，
+	// 或者后端进程根本没起来。
+	//
+	// 这个键由**前端**产生（web/src/lib/api/client.ts），后端从不返回它。
+	// 它定义在这里，是为了让 TestFrontendDictCoversErrorKeys 能覆盖到：
+	// 那个用例用正则扫本文件的全部 error.* 键，再断言前端字典里有对应文案。
+	// 前端字典里若少了它，界面会直接把 "error.backendUnreachable" 显示给用户。
 	KeyBackendUnreachable = "error.backendUnreachable"
 	// KeyFrontendDisabled 表示后端以纯 API 模式运行、前端未部署。
 	// 常见于用 IDE 或 go run 启动、且没有 bin/web 的开发场景。
@@ -68,7 +73,16 @@ const SuccessMsg = "ok"
 
 // Response 是所有接口的统一响应体。
 //
-// 语义由 HTTP 状态码承载，code 只作成功/失败标志，不重复表达状态。
+// 语义由 HTTP 状态码承载，`Code` 恒等于同一个状态码。
+//
+// 为什么是状态码的副本而不是 0/1：Go 的 int 零值是 0，而本字段没有 omitempty，
+// 所以用 0 表示成功时，任何「忘了给 Code 赋值」的新代码路径都会**静默返回成功**：
+//
+//	json.Marshal(Response{Msg: "ok", Data: x})  // 忘了设 Code
+//	→ {"code":0,"msg":"ok","data":...}      // 前端判成成功
+//
+// 取状态码做值，零值 0 就不可能是合法值。更重要的是：调用方**不需要也不应该**
+// 自己填 Code —— 一律走 write()，它把状态码写进去，所以两者不可能分歧。
 type Response struct {
 	Code   int          `json:"code"`
 	Msg    string       `json:"msg"` // 成功为 "ok"，失败为 i18n 键（如 error.notFound）
@@ -86,8 +100,18 @@ type FieldError struct {
 	Param string `json:"param,omitempty"`
 }
 
+// write 是写出信封的唯一出口。
+//
+// 它把 HTTP 状态码写进 Code，所以两者在结构上不可能分歧——调用方根本碰不到 Code。
+// 分开写的话（每处自己填 Code: 200 / Code: 1）迟早会有一处填错，
+// 而填错的表现是「HTTP 说 403，body 说成功」。
+func write(c *gin.Context, status int, resp Response) {
+	resp.Code = status
+	c.JSON(status, resp)
+}
+
 func Success(c *gin.Context, data any) {
-	c.JSON(http.StatusOK, Response{Code: 0, Msg: SuccessMsg, Data: data})
+	write(c, http.StatusOK, Response{Msg: SuccessMsg, Data: data})
 }
 
 // resultKeyCtx 是失败键在请求上下文里的存放位置。
@@ -109,15 +133,14 @@ func ResultKey(c *gin.Context) string {
 // Fail 用 i18n 键而非文案写失败响应。
 func Fail(c *gin.Context, httpStatus int, msgKey string) {
 	c.Set(resultKeyCtx, msgKey)
-	c.JSON(httpStatus, Response{Code: 1, Msg: msgKey})
+	write(c, httpStatus, Response{Msg: msgKey})
 }
 
 // FailValidation 写参数校验失败响应，msg 固定为 KeyValidationFailed，
 // 细节在 errors 数组里。
 func FailValidation(c *gin.Context, fields []FieldError) {
 	c.Set(resultKeyCtx, KeyValidationFailed)
-	c.JSON(http.StatusBadRequest, Response{
-		Code:   1,
+	write(c, http.StatusBadRequest, Response{
 		Msg:    KeyValidationFailed,
 		Errors: fields,
 	})
@@ -183,13 +206,12 @@ func FailFromError(c *gin.Context, err error) {
 		// 这不是错误提示，而是「请确认」：前端收到它应弹确认框并展示影响面，
 		// 用户确认后带 ?cascade=true 重发。详见 docs/architecture.md §3.4。
 		c.Set(resultKeyCtx, KeyHasDependents)
-		c.JSON(http.StatusConflict, Response{Code: 1, Msg: KeyHasDependents, Data: depErr.Impact})
+		write(c, http.StatusConflict, Response{Msg: KeyHasDependents, Data: depErr.Impact})
 
 	case errors.As(err, &dupErr):
 		// 复用字段级错误的形状，前端能把「用户名已存在」高亮到对应输入框
 		c.Set(resultKeyCtx, KeyDuplicate)
-		c.JSON(http.StatusConflict, Response{
-			Code:   1,
+		write(c, http.StatusConflict, Response{
 			Msg:    KeyDuplicate,
 			Errors: []FieldError{{Field: dupErr.Field, Rule: "unique"}},
 		})

@@ -187,7 +187,7 @@ bypassed with one header line. `TestRateLimitIgnoresSpoofedForwardedFor` covers 
 
 ```go
 type Response struct {
-    Code   int          `json:"code"`             // 0 success / 1 failure
+    Code   int          `json:"code"`             // always the HTTP status code
     Msg    string       `json:"msg"`              // "ok" on success; an i18n key on failure
     Data   any          `json:"data,omitempty"`
     Errors []FieldError `json:"errors,omitempty"`
@@ -351,7 +351,7 @@ cd server && go test ./...        # everything
 go test ./... -run TestNewDB      # one test
 ```
 
-There are 114 cases across 15 test files today. `handler` / `job` / `auth` / `domain` / `cmd/server` have no test files of
+There are 115 cases across 15 test files today. `handler` / `job` / `auth` / `domain` / `cmd/server` have no test files of
 their own — their correctness is covered by the end-to-end cases in `httpserver` (essentially every branch of a handler
 maps to one HTTP assertion).
 
@@ -363,7 +363,7 @@ maps to one HTTP assertion).
 | `service/rbac_test.go` (including identity resolution in `authz_service`) | delete impact (including grants on descendant menus), cascade delete, cycle-reference rejection, four delete guards, administrator identity resolution, pagination edges |
 | `perm/perm_test.go` | group coverage and uniqueness, key-naming convention, detection of unknown permission codes, frontend dictionary coverage |
 | `repository/session_repository_test.go` | **the datetime storage format**, time round-trips, expiry cleanup, kicking by user, cascading on user delete |
-| `httpx/response_test.go` | error keys unique and correctly named, frontend dictionary coverage, **every backend field name and validation rule has a message key** |
+| `httpx/response_test.go` | error keys unique and correctly named, frontend dictionary coverage (including **the two frontend-generated keys hardcoded in client.ts**), **every backend field name and validation rule has a message key** |
 | `config/config_test.go` | defaults without a config file, partial file overrides, environment overriding the file, unknown fields rejected, invalid values rejected, the candidate order of `web.dir` |
 | `httpserver/static_test.go` | SPA fallback, cache headers, API 404s returning JSON, startup failing on an incomplete directory |
 | `httpserver/router_test.go` | **fail-closed assertions on the public endpoint set**, **detection of missing assembly**, 401 for everything unauthenticated, the full login/logout path, a disabled user losing access immediately, the response envelope, error keys, the field-level validation array, 413/404 mapping |

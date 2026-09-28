@@ -58,16 +58,30 @@ Vite dev server 把 `/api` 与 `/healthz` 代理到 `:8080`，前端热更新与
 
 ```jsonc
 {
-  "code": 200,                       // 0 = 成功，1 = 失败
+  "code": 200,                     // 恒等于 HTTP 状态码
   "msg":  "ok",                    // 成功为 "ok"；失败为 i18n 键（见 §6）
   "data": { },                     // 只有成功时存在
   "errors": [ ]                    // 只有字段级校验失败时存在
 }
 ```
 
-**语义由 HTTP 状态码承载**，`code` 只作成功/失败标志，不重复表达状态。
+**语义由 HTTP 状态码承载**，而 `code` 恒等于同一个状态码（`write()` 统一写入，调用方碰不到它）。
 这是相对若依原版（HTTP 恒 200 + `code:200/500`）的一个有意偏离——保留 HTTP 语义后，
 curl、日志、监控、网关都能直接看出错误率，不用解析 body。
+
+**为什么 `code` 是状态码的副本，而不是 0/1：** Go 的 `int` 零值是 0，而 `Code` 字段
+没有 `omitempty`，所以拿 0 当成功值时，任何「忘了给 `Code` 赋值」的新代码路径
+都会**静默返回成功**。实测：
+
+```go
+json.Marshal(Response{Msg: "ok", Data: x})   // 忘了设 Code
+→ {"code":0,"msg":"ok",...}                // 前端判成成功
+```
+
+取状态码做值，零值 0 就**不可能是合法值**——忘了赋值会当场露出破绽。
+
+`code` 的唯一消费方是**信封判别器**（见 [architecture-web.md](architecture-web.md) §5.4）：
+前端据此区分「这是我家的响应」与「中间有代理应答」。成功与否看 HTTP 状态，不看 `code`。
 
 | 场景 | HTTP | `msg` |
 | --- | --- | --- |
@@ -108,7 +122,7 @@ curl、日志、监控、网关都能直接看出错误率，不用解析 body�
 
 ```json
 {
-  "code": 1,
+  "code": 400,
   "msg": "error.validationFailed",
   "errors": [
     { "field": "name",     "rule": "min",      "param": "2" },
@@ -125,7 +139,7 @@ curl、日志、监控、网关都能直接看出错误率，不用解析 body�
 
 写新接口时必须维持：
 
-1. 响应体永远有 `code` 和 `msg`
+1. 响应体永远有 `code` 和 `msg`，且 `code` 恒等于 HTTP 状态码（由 `httpx.write()` 保证）
 2. 失败响应的 `msg` 永远是 i18n 键，**不含自然语言**（否则前端无法翻译）
 3. `data.list` 在空结果时是 `[]` 而非 `null`（否则前端要特判）
 4. 列表接口的分页结构固定为 `{list, total, page, page_size}`，且：
@@ -143,11 +157,11 @@ curl、日志、监控、网关都能直接看出错误率，不用解析 body�
 ```
 DELETE /api/v1/menus/5
 → 409 Conflict
-  {"code":1,"msg":"error.hasDependents",
+  {"code":409,"msg":"error.hasDependents",
    "data":{"child_menus":3,"affected_roles":2}}
 
 DELETE /api/v1/menus/5?cascade=true
-→ 200 {"code":0,"msg":"ok","data":{"id":5}}
+→ 200 {"code":200,"msg":"ok","data":{"id":5}}
 ```
 
 各资源的影响面：
@@ -192,7 +206,7 @@ DELETE /api/v1/menus/5?cascade=true
 | **只用 SQLite 单数据源** | 同时支持 MySQL + SQLite | 双数据源需要两套 DDL、两套方言 SQL、两倍测试矩阵、CI 起 MySQL。"极简"目标下这个成本换不来收益 |
 | **`modernc.org/sqlite`** | `mattn/go-sqlite3`（CGO） | 纯 Go，`GOOS/GOARCH` 交叉编译无依赖。性能约 CGO 版一半，单机管理后台完全够用 |
 | **不用 ORM** | GORM / Ent / sqlc | 管理后台 QPS 个位数，ORM 的反射与代码生成收益低；手写 SQL 便于排查，也符合"极简" |
-| **HTTP 语义状态码** | 若依式 HTTP 恒 200 | 见 §3.1 |
+| **HTTP 语义状态码** | 若依式 HTTP 恒 200 + `code:200/500` | 见 §3.1。`code` 是状态码的副本而非 0/1：Go 的 int 零值是 0，用 0 表示成功会让「忘了给 Code 赋值」静默变成成功 |
 | **后端只出 i18n 键** | 后端按 `Accept-Language` 输出文案 | 文案只需存在一处（前端，UI 所在处）；切换语言无需重新请求；后端保持语言中立，多语言用户都能用 |
 | **前端手写 i18n** | svelte-i18n / paraglide-js | 2 个语种、消息量小，运行时库的动态加载与格式化插件全用不上；手写版靠 TS 类型保证缺键编译报错 |
 | **版本化迁移** | `CREATE TABLE IF NOT EXISTS` | 后者无法改表结构，等于"上线后手工改库" |
@@ -220,7 +234,7 @@ make dev-web      # Vite :5173，/api 与 /healthz 代理到 :8080
 ```
 
 此时打开 `http://localhost:8080/` 会看到
-`{"code":1,"msg":"error.frontendDisabled"}` —— **这是预期的**，它明确告诉你
+`{"code":404,"msg":"error.frontendDisabled"}` —— **这是预期的**，它明确告诉你
 「后端在纯 API 模式，前端没部署」，而不是让你以为服务坏了。
 
 **形态 3**（nginx 托管前端）：
@@ -404,14 +418,23 @@ error.cannotKickSelf        error.frontendDisabled
 error.invalidJobCron        error.fileTooLarge
 error.quotaExceeded         error.invalidFile
 error.wrongOldPassword
-# 以下两个仅由前端产生，后端不会返回：
+# 以下两个仅由前端产生（web/src/lib/api/client.ts），后端不会返回：
 error.network               # fetch 抛异常：没有任何东西应答
 error.backendUnreachable    # 有响应但不是信封：请求被代理拦下，或后端没启动
 ```
 
-这些键只定义在 `server/internal/httpx/response.go`，文案在前端字典里。
-`internal/httpx` 与 `internal/perm` 各有一个用例会去读前端字典，确认两边没跑偏——
-否则界面会把 `error.notFound` 这样的原始键名直接显示给用户。
+除最后两个外，这些键都定义在 `server/internal/httpx/response.go`，文案在前端字典里。
+两侧靠字符串约定耦合，漏登记不会报错，界面只会把 `error.notFound` 这样的原始键名直接
+显示给用户，所以有两条用例兵住：
+
+| 用例 | 扫哪里 |
+| --- | --- |
+| `TestFrontendDictCoversErrorKeys` | 后端 `response.go` 的键常量 |
+| `TestFrontendGeneratedErrorKeysAreTranslated` | 前端 `client.ts` 里写死的键字面量 |
+
+两条都需要，不能只留一条：`error.backendUnreachable` 在后端也有一个常量（它是
+「强制前端字典登记它」的载体，后端自己从不返回它），因此能被上一条覆盖到；
+而 **`error.network` 在后端没有任何常量**，只有下一条能拦住它。
 
 ## 7. 1C1G 约束下的设计取舍
 
@@ -432,7 +455,7 @@ error.backendUnreachable    # 有响应但不是信封：请求被代理拦下�
 
 | 项 | 说明 |
 | --- | --- |
-| 初始数据库可复现 | 目前 `server/data.db` 随仓库分发（且带着开发期数据）。最终应改为从 `migrations/` + 种子 SQL 重新生成，而不是手工改库后提交 |
+| 初始数据库可复现 | 目前 `server/data.db` 随仓库分发。它同时是开发时的活数据库，登录一次就会写入会话与日志，所以提交前要跑 `make db-clean`。最终应改为从 `migrations/` + 种子 SQL 重新生成，不再随仓库分发 |
 | 字体体积 | Inter 可变字体包含全部子集，`dist` 里 woff2 共 218 KB。若只面向中英文可裁剪为 latin + latin-ext |
 
 前端侧的待办见 [architecture-web.md](architecture-web.md) §9，后端侧见

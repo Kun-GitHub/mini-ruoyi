@@ -331,8 +331,8 @@ func TestSuccessEnvelope(t *testing.T) {
 		t.Fatalf("返回 %d", w.Code)
 	}
 	e := decode(t, w)
-	if e.Code != 0 || e.Msg != "ok" {
-		t.Errorf("成功信封 = %+v，期望 code=0 msg=ok", e)
+	if e.Code != http.StatusOK || e.Msg != "ok" {
+		t.Errorf("成功信封 = %+v，期望 code=200 msg=ok", e)
 	}
 }
 
@@ -493,8 +493,8 @@ func TestPanicReturnsEnvelope(t *testing.T) {
 		t.Errorf("Content-Type = %q，期望 JSON（空 body 的 500 会让前端误判成后端没起来）", ct)
 	}
 	e := decode(t, w)
-	if e.Code != 1 || e.Msg != "error.internal" {
-		t.Errorf("响应 = %+v，期望 {code:1, msg:error.internal}", e)
+	if e.Code != http.StatusInternalServerError || e.Msg != "error.internal" {
+		t.Errorf("响应 = %+v，期望 {code:500, msg:error.internal}", e)
 	}
 }
 

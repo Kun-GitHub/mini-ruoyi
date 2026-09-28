@@ -5,7 +5,13 @@ export type FieldError = {
   param?: string
 }
 
-/** 成功响应的信封。 */
+/**
+ * 后端响应的信封，对应 internal/httpx.Response。
+ *
+ * `code` 恒等于 HTTP 状态码（后端由 httpserver 的 write() 统一写入）。
+ * 它的作用不是「判断成功与否」——那是 res.ok 的活——而是**证明这份 body 属于本服务**：
+ * 拿到一个 200 但 body 不是信封，就说明请求被代理/网关拦了，或者后端压根没起来。
+ */
 type Envelope = {
   code: number
   msg: string
@@ -129,7 +135,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     throw new ApiError(res.status, 'error.backendUnreachable')
   }
 
-  if (res.ok && envelope.code === 0) {
+  if (res.ok) {
     return envelope.data as T
   }
 
@@ -189,7 +195,7 @@ async function requestForm<T>(method: string, path: string, form: FormData): Pro
     )
     throw new ApiError(res.status, 'error.backendUnreachable')
   }
-  if (res.ok && envelope.code === 0) return envelope.data as T
+  if (res.ok) return envelope.data as T
 
   if (res.status === 401) unauthorizedHandler?.()
   throw new ApiError(

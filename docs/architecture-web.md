@@ -177,13 +177,15 @@ localStorage['mini-ruoyi.locale'] 存在且在支持列表内 → 用它
 后端统一返回（详见 [architecture.md](architecture.md)）：
 
 ```jsonc
-{ "code": 0, "msg": "ok", "data": {...} }
-{ "code": 1, "msg": "error.validationFailed", "errors": [{ "field", "rule", "param" }] }
+{ "code": 200, "msg": "ok", "data": {...} }
+{ "code": 400, "msg": "error.validationFailed", "errors": [{ "field", "rule", "param" }] }
 ```
 
 前端消费规则：
 
-- 成功判定看 **HTTP 状态码**（`res.ok`），`code` 仅作冗余标志
+- 成功判定看 **HTTP 状态码**（`res.ok`），不看 `code`
+- `code` 只用来判别「这是不是我家的信封」：不是数字就判为 `error.backendUnreachable`
+  （Vite 代理在后端没起来时返回 502 + 空 body，靠这个和「后端出错」区分开）
 - 失败时 `msg` 是 i18n 键，直接 `t(msg)` 渲染
 - 有 `errors[]` 时按字段高亮表单
 
@@ -442,12 +444,15 @@ web/dist/assets/*     →  /assets/*，Cache-Control: immutable
 | 文件 | 原始 | gzip |
 | --- | --- | --- |
 | `index.html` | 0.5 KB | 0.3 KB |
-| `assets/index-*.css` | 43.6 KB | 8.5 KB |
-| `assets/index-*.js` | 314 KB | **90 KB** |
-| `assets/*.woff2`（Inter 可变字体全部子集） | 218 KB | — |
-| 总计（12 个文件） | 592 KB | — |
+| `assets/index-*.css` | 42.6 KB | 8.2 KB |
+| `assets/index-*.js` | 307 KB | **88 KB** |
+| `assets/*.woff2`（Inter 可变字体全部子集） | 213 KB | — |
+| 总计（12 个文件） | 578 KB | — |
 
 字体是最大的一块。若只面向中英文，可裁成 latin + latin-ext 子集。
+
+数字取自刚 `make web` 完的产物。**它们会随每次构建小幅波动**（文件名里的内容哈希每次都变），
+所以只用来判断量级与「哪一块占大头」，不要当成精确基线去比对差别。
 
 ## 8. 开发流程
 
@@ -478,7 +483,7 @@ npm run build       # 生产构建
 | 层 | 命令 | 覆盖 |
 | --- | --- | --- |
 | 类型与模板 | `npm run check` | svelte-check + tsc |
-| 接口契约 | `make test` | 后端 114 个用例（CGO 无关的正确性都在这层） |
+| 接口契约 | `make test` | 后端 115 个用例（CGO 无关的正确性都在这层） |
 | 真实交互 | `make test-e2e` | Playwright + Chromium，11 个 spec / 77 个用例 |
 
 E2E 走 `webServer` 自动起一个**用临时库的后端**，每次运行前清库——

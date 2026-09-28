@@ -185,7 +185,7 @@ srv.Shutdown(15s)                    优雅关闭
 
 ```go
 type Response struct {
-    Code   int          `json:"code"`             // 0 成功 / 1 失败
+    Code   int          `json:"code"`             // 恒等于 HTTP 状态码
     Msg    string       `json:"msg"`              // 成功 "ok"；失败为 i18n 键
     Data   any          `json:"data,omitempty"`
     Errors []FieldError `json:"errors,omitempty"`
@@ -345,7 +345,7 @@ cd server && go test ./...        # 全部
 go test ./... -run TestNewDB      # 单个
 ```
 
-当前 114 个用例，分布在 15 个测试文件里。`handler` / `job` / `auth` / `domain` / `cmd/server`
+当前 115 个用例，分布在 15 个测试文件里。`handler` / `job` / `auth` / `domain` / `cmd/server`
 没有独立测试文件——它们的正确性由 `httpserver` 的端到端用例覆盖（handler 的每个分支
 基本都对应一条 HTTP 断言）。
 
@@ -357,7 +357,7 @@ go test ./... -run TestNewDB      # 单个
 | `service/rbac_test.go`（含 `authz_service` 的身份解析） | 删除影响面（含后代菜单的授权）、级联删除、环引用拦截、四条删除守卫、管理员身份解析、分页边界 |
 | `perm/perm_test.go` | 分组覆盖与去重、键名推导约定、未知权限码检出、前端字典覆盖 |
 | `repository/session_repository_test.go` | **datetime 存储格式**、时间往返、过期清理、按用户踢人、删用户级联 |
-| `httpx/response_test.go` | 错误键唯一且命名规范、前端字典覆盖、**后端全部字段名与校验规则都有对应文案键** |
+| `httpx/response_test.go` | 错误键唯一且命名规范、前端字典覆盖（含 **client.ts 里写死的那两个前端自产键**）、**后端全部字段名与校验规则都有对应文案键** |
 | `config/config_test.go` | 没有配置文件用默认值、文件部分覆盖、环境变量覆盖文件、未知字段被拒、非法取值被拒、`web.dir` 的候选路径顺序 |
 | `httpserver/static_test.go` | SPA 兜底、缓存头、API 404 返回 JSON、目录不完整时启动失败 |
 | `httpserver/router_test.go` | **公开端点集合的 fail-closed 断言**、**装配遗漏检测**、未登录一律 401、登录/登出全链路、停用用户立刻失效、响应信封、错误键、字段级校验数组、413/404 映射 |

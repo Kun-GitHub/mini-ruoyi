@@ -149,13 +149,23 @@ Users get the new version on refresh (`index.html` is `no-cache` and `assets/*` 
 
 > Exception: if a user **has the page open right now** and you delete the old hashed file it references between two
 > refreshes, that page's lazy import 404s. The frontend listens for `vite:preloadError` and reloads the whole page
+> Exception: if a user **has the page open right now** and you delete the old hashed file it references between two
+> refreshes, that page's lazy import 404s. The frontend listens for `vite:preloadError` and reloads the whole page
 > automatically, so it shows up as "I clicked something and the page refreshed itself" rather than a blank screen.
+
+> ⚠️ **Frontend-only updates only work while the envelope contract is unchanged.** After a change to the response
+> envelope (the value of `code`), an old frontend rejects every response from the new backend — every request reports
+> **"Cannot reach the backend service"**, login included.
+>
+> You must **update the frontend and get the browser to refresh at the same time**: `index.html` is `no-cache`, so one
+> manual refresh is enough. If `index.html` itself is cached (a CDN in front, say), purge it. When upgrading the backend
+> binary, `rsync` the `web/` directory along with it — that is the simplest safe habit.
 
 ## 6. Troubleshooting
 
 | Symptom | Look at first |
 | --- | --- |
-| Opening `:8080` shows `{"code":1,"msg":"error.frontendDisabled"}` | The backend is in API-only mode and did not find the `web/` directory. Look for the "前端目录 ... 不存在" line in the startup log |
+| Opening `:8080` shows `{"code":404,"msg":"error.frontendDisabled"}` | The backend is in API-only mode and did not find the `web/` directory. Look for the "前端目录 ... 不存在" line in the startup log |
 | The frontend says it cannot reach the backend | The backend is not running, or the proxy is misconfigured. The browser console prints the actual HTTP status and response body |
 | An endpoint returns 500 | `journalctl -u mini-ruoyi`. Every 500 goes into the log in full; the client only gets a key |
 | Everyone gets a 429 at once | There is a proxy in front but `APP_TRUSTED_PROXIES` is unset, so the rate limit went global |
