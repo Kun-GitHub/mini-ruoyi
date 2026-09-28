@@ -1,5 +1,7 @@
 # mini-ruoyi / web
 
+[English](README.en.md) | 简体中文
+
 前端单页应用。Svelte 5 + Vite + TypeScript + Tailwind CSS v4 + shadcn-svelte。
 
 产物是纯静态文件，由后端从磁盘托管（见 [../docs/architecture-web.md](../docs/architecture-web.md)）。

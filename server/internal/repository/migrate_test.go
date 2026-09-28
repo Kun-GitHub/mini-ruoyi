@@ -127,8 +127,9 @@ func TestSeedRbac(t *testing.T) {
 	}
 }
 
-// TestMigrateOnLegacyDatabase 覆盖升级路径：仓库中随附的初始 data.db 表已存在、有数据，
-// 但没有迁移记录。
+// TestMigrateOnLegacyDatabase 覆盖升级路径：库里已有表与数据，但没有任何迁移记录。
+// 用形式化的方式模拟这种旧库，而不是读仓库里那份 data.db——
+// 后者迁移记录齐全，形状与这里要覆盖的场景不同。
 func TestMigrateOnLegacyDatabase(t *testing.T) {
 	db, err := NewDB(filepath.Join(t.TempDir(), "legacy.db"))
 	if err != nil {
@@ -137,7 +138,7 @@ func TestMigrateOnLegacyDatabase(t *testing.T) {
 	defer db.Close()
 	ctx := context.Background()
 
-	// 模拟仓库随附的初始库：里面有表、有数据，但没有任何迁移记录
+	// 构造上述旧库：里面有表、有数据，但没有任何迁移记录
 	if _, err := db.ExecContext(ctx, `
 		CREATE TABLE legacy_table (
 			id      INTEGER PRIMARY KEY AUTOINCREMENT,

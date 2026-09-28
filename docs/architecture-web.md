@@ -1,5 +1,7 @@
 # 前端架构
 
+[English](architecture-web.en.md) | 简体中文
+
 Svelte 5 + Vite + TypeScript + Tailwind CSS v4 + shadcn-svelte。
 纯静态单页应用，产物由后端从磁盘托管，**不使用 SvelteKit**。
 
@@ -92,7 +94,7 @@ web/
 
 ## 4. i18n
 
-手写实现，约 120 行，**零运行时依赖**。
+手写实现，约 130 行，**零运行时依赖**。
 
 ```
 src/lib/i18n/
@@ -252,7 +254,7 @@ window.addEventListener('vite:preloadError', () => location.reload())
 
 ### 5.6 路由
 
-`src/lib/router.svelte.ts` 约 100 行，没有路由库。
+`src/lib/router.svelte.ts` 约 120 行，没有路由库。
 
 ```
 菜单树 ──flatten──▶ [{ path, titleKey, component }]
@@ -443,7 +445,7 @@ web/dist/assets/*     →  /assets/*，Cache-Control: immutable
 | `assets/index-*.css` | 43.6 KB | 8.5 KB |
 | `assets/index-*.js` | 314 KB | **90 KB** |
 | `assets/*.woff2`（Inter 可变字体全部子集） | 218 KB | — |
-| 总计（12 个文件） | 577 KB | — |
+| 总计（12 个文件） | 592 KB | — |
 
 字体是最大的一块。若只面向中英文，可裁成 latin + latin-ext 子集。
 

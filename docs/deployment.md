@@ -1,5 +1,7 @@
 # 部署与运维
 
+[English](deployment.en.md) | 简体中文
+
 面向 1 核 1G 的自托管场景。架构说明见 [architecture.md](architecture.md)，
 配置项清单见 [../server/README.md](../server/README.md)。
 

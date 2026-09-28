@@ -1,5 +1,7 @@
 # mini-ruoyi / server
 
+[English](README.en.md) | 简体中文
+
 后端服务。Go 1.25 + Gin + `database/sql` + SQLite（`modernc.org/sqlite`，纯 Go 无 CGO）。
 
 模块名 `mini-ruoyi`。数据库后端只有 SQLite 一种，没有多方言抽象。
@@ -29,7 +31,9 @@ make build && make run       # 二进制与前端产物落在 bin/
 ```
 
 启动时会自动执行未应用的迁移，并创建 `data.db`（若不存在）。
-仓库自带的 `data.db` 是一个空的初始库，开箱即用。
+仓库自带的 `data.db` 是**已经初始化好**的库：迁移记录齐全（`0002`–`0011` 全部已应用），
+并且带着开发期的数据（2 个用户 / 2 个角色 / 13 个菜单 / 1 条权限授权 / 3 个任务），开箱即用。
+功能开发完成后它会被移除，改为从 `migrations/` + 种子 SQL 重建。
 
 ## 配置
 
@@ -72,7 +76,7 @@ cp config/config.example.yaml config/config.yaml   # 可选，不改也能跑
 启动时会打印当前端点分类：
 
 ```
-已注册 23 个 API 端点（公开 1 / 仅登录 2 / 需权限 20）
+已注册 38 个 API 端点（公开 1 / 仅登录 4 / 需权限 33）
 ```
 
 **认证方式**：登录后服务端下发 `mr_session` cookie（HttpOnly / SameSite=Lax）。
@@ -236,9 +240,8 @@ curl -b cookie.txt -X DELETE localhost:8080/api/v1/menus/1
 
 ### 改表结构的注意事项
 
-仓库里的 `data.db` 是随代码分发的旧库，表已存在但没有迁移记录。因此迁移只能**追加**：
-版本记录在 `schema_migrations`，只执行没跑过的文件，不重建、不覆盖已有数据，
-否则老库升级会失败。参考用例 `TestMigrateOnLegacyDatabase`（旧库带数据、无迁移记录）与
+迁移只能**追加**：版本记录在 `schema_migrations`，只执行没跑过的文件，不重建、不覆盖已有数据，
+否则老库（表已存在、可能没有任何迁移记录）升级会失败。参考用例 `TestMigrateOnLegacyDatabase`（旧库带数据、无迁移记录）与
 `TestMigrateDetectsMissingTables`（记录说跑过、表却不在）。
 
 ### SQLite 连接配置
@@ -275,7 +278,8 @@ internal/middleware/               日志、限流、请求体上限、缓存头
 internal/httpserver/               路由装配、静态资源托管 + SPA 兜底
 ```
 
-依赖方向严格单向，`handler` 不得 import `repository`。详见
+依赖方向严格单向：`handler` 只允许 import `repository` 来组装列表筛选条件
+（`Filter` 家族），不得写 SQL、不得做业务判断。详见
 [../docs/architecture-server.md](../docs/architecture-server.md)。
 
 新增一个资源的完整步骤（8 步）也写在那份文档里。

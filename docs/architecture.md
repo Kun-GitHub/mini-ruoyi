@@ -1,5 +1,7 @@
 # 整体架构
 
+[English](architecture.en.md) | 简体中文
+
 本文描述 mini-ruoyi 的系统全貌、前后端契约与关键决策。分层细节见
 [architecture-server.md](architecture-server.md) 和 [architecture-web.md](architecture-web.md)。
 
@@ -430,7 +432,7 @@ error.backendUnreachable    # 有响应但不是信封：请求被代理拦下�
 
 | 项 | 说明 |
 | --- | --- |
-| 初始数据库可复现 | 目前 `server/data.db` 随仓库分发。最终应改为从 `migrations/` + 种子 SQL 重新生成，而不是手工改库后提交 |
+| 初始数据库可复现 | 目前 `server/data.db` 随仓库分发（且带着开发期数据）。最终应改为从 `migrations/` + 种子 SQL 重新生成，而不是手工改库后提交 |
 | 字体体积 | Inter 可变字体包含全部子集，`dist` 里 woff2 共 218 KB。若只面向中英文可裁剪为 latin + latin-ext |
 
 前端侧的待办见 [architecture-web.md](architecture-web.md) §9，后端侧见

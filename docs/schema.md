@@ -1,5 +1,7 @@
 # 数据库 Schema
 
+[English](schema.en.md) | 简体中文
+
 本文是数据库结构的**唯一真源**。代码里的实体、迁移、种子数据都以本文为准。
 
 数据库：SQLite（`modernc.org/sqlite`，纯 Go 无 CGO）。不使用 ORM。
