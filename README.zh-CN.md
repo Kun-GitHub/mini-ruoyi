@@ -5,6 +5,23 @@
 跑在 1 核 1G 服务器上的极简管理系统。后端是一个 Go 单体进程（Gin + SQLite），前端是 Svelte 5 单页应用，
 **由后端直接从磁盘托管前端构建产物**——因此部署时不需要 nginx，运行时不需要 Node，也不需要独立的数据库服务。
 
+## 三个版本怎么选
+
+三个项目共用 RBAC 权限模型，区别只在「要多少机器」——按部署形态选，而不是按功能清单选：
+
+|  | [RuoYi-Go](https://github.com/Kun-GitHub/RuoYi-Go) | [SaaS-Zero](https://github.com/saas-zero/saas-zero) | **mini-ruoyi**（本仓库） |
+| --- | --- | --- | --- |
+| 定位 | 单体，DDD 参考实现 | 多租户微服务 | 跑在 1 核 1G 上 |
+| 进程数 | 1 | 4+（gateway / auth / basedata rpc+api / job） | 1 |
+| 存储 | MySQL（默认）/ PostgreSQL | PostgreSQL + etcd + Redis | 一个 SQLite 文件，零 CGO |
+| 前端 | RuoYi-Vue3 | [saas-zero-web](https://github.com/Kun-GitHub/saas-zero-web) | Svelte 5，由后端托管 |
+| 多租户 | 无 | 有（Casbin Domain RBAC） | **无** |
+| 状态 | 已暂停，由 SaaS-Zero 接棒 | 活跃 | **活跃** |
+
+一句话：**要读 DDD 分层看 RuoYi-Go，做多租户产品用 SaaS-Zero，机器只有 1 核 1G 就上 mini-ruoyi。**
+
+
+
 ## 特性
 
 - **单个二进制 + 一个前端目录**：`bin/mini-ruoyi` 和 `bin/web/`，`scp` 上去就能跑，一个 systemd unit 搞定

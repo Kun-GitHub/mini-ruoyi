@@ -6,7 +6,24 @@ A minimal admin system that runs on a 1-core, 1 GB server. The backend is a sing
 frontend is a Svelte 5 single-page app, and **the backend serves the frontend build straight off disk** — so
 deployment needs no nginx, the runtime needs no Node, and there is no separate database service to run.
 
-## Features
+## Where this fits
+
+Three projects share the RBAC model and differ in how much machine they need —
+pick by deployment shape, not by feature list:
+
+|  | [RuoYi-Go](https://github.com/Kun-GitHub/RuoYi-Go) | [SaaS-Zero](https://github.com/saas-zero/saas-zero) | **mini-ruoyi** (this repo) |
+| --- | --- | --- | --- |
+| Role | monolith, DDD reference | multi-tenant microservices | runs on a 1-core 1 GB box |
+| Processes | 1 | 4+ (gateway / auth / basedata rpc+api / job) | 1 |
+| Storage | MySQL (default) / PostgreSQL | PostgreSQL + etcd + Redis | one SQLite file, no CGO |
+| Frontend | RuoYi-Vue3 | [saas-zero-web](https://github.com/Kun-GitHub/saas-zero-web) | Svelte 5, served by the backend |
+| Tenant isolation | no | yes (Casbin domain RBAC) | **no** |
+| Status | paused; SaaS-Zero took over | active | **active** |
+
+In one line: **read RuoYi-Go for DDD layering, use SaaS-Zero for a multi-tenant product, run mini-ruoyi
+when the box is a 1-core 1 GB VPS.**
+
+
 
 - **One binary + one frontend directory**: `bin/mini-ruoyi` and `bin/web/`. `scp` them up and start; a single systemd unit is all it takes
 - **The frontend updates on its own**: the build output is not embedded in the binary, so rebuilding needs no backend restart — a browser refresh picks up the new version
@@ -32,7 +49,7 @@ deployment needs no nginx, the runtime needs no Node, and there is no separate d
 Requires Go 1.25+ and Node.js 20+ (Node is only used to build the frontend).
 
 ```bash
-git clone <repo-url> && cd mini-ruoyi
+git clone https://github.com/Kun-GitHub/mini-ruoyi.git && cd mini-ruoyi
 make build     # build the frontend into web/dist, compile the binary into bin/, then place the frontend at bin/web/
 make run       # start it; listens on :8080 by default
 ```
