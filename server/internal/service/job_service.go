@@ -184,8 +184,36 @@ func (s *JobService) RunNow(ctx context.Context, key string) error {
 	if _, err := s.repo.GetByKey(ctx, key); err != nil {
 		return err
 	}
-	go s.execute(context.Background(), key)
+	// 标记为手动触发：把「定时跑的」和「人点的」区分开，
+	// 才答得了「这个任务怎么一天跑了好几遍」
+	go s.execute(context.Background(), key, domain.JobTriggerManual)
 	return nil
+}
+
+// JobLogPage 与其它列表接口结构一致，前端分页逻辑可复用。
+type JobLogPage = Page[domain.JobLog]
+
+// ListLogs 翻某个任务的执行历史。
+//
+// 未注册的 key 返回 404 而不是空列表：与 List / Get 一样，
+// 清单以代码注册表为准，库里残留的已删任务不该在界面上留一个入口。
+func (s *JobService) ListLogs(ctx context.Context, key string, page, pageSize int) (JobLogPage, error) {
+	if _, ok := s.registry.Get(key); !ok {
+		return JobLogPage{}, domain.ErrNotFound
+	}
+
+	page, pageSize = normalizePage(page, pageSize)
+
+	total, err := s.repo.CountRunLogs(ctx, key)
+	if err != nil {
+		return JobLogPage{}, fmt.Errorf("count job logs: %w", err)
+	}
+	page, offset := clampPage(page, pageSize, total)
+	list, err := s.repo.ListRunLogs(ctx, key, pageSize, offset)
+	if err != nil {
+		return JobLogPage{}, fmt.Errorf("list job logs: %w", err)
+	}
+	return JobLogPage{List: list, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
 // rescheduleAll 按数据库里的状态重建全部调度。
@@ -216,7 +244,7 @@ func (s *JobService) rescheduleAll(ctx context.Context) (int, error) {
 
 func (s *JobService) schedule(item domain.Job) (cron.EntryID, error) {
 	key := item.Key
-	id, err := s.sched.AddFunc(item.Cron, func() { s.execute(context.Background(), key) })
+	id, err := s.sched.AddFunc(item.Cron, func() { s.execute(context.Background(), key, domain.JobTriggerCron) })
 	if err != nil {
 		return 0, fmt.Errorf("添加调度 %s（cron=%q）: %w", key, item.Cron, err)
 	}
@@ -261,7 +289,7 @@ func (s *JobService) nextRuns() map[string]time.Time {
 //
 // 用 TryLock 而不是阻塞：上一次还没跑完时直接跳过并记录。
 // 不这么做的话，一个耗时超过间隔的任务会不断堆积，把 1G 的内存吃光。
-func (s *JobService) execute(ctx context.Context, key string) {
+func (s *JobService) execute(ctx context.Context, key, trigger string) {
 	def, ok := s.registry.Get(key)
 	if !ok {
 		return
@@ -277,7 +305,7 @@ func (s *JobService) execute(ctx context.Context, key string) {
 
 	if !lock.TryLock() {
 		log.Printf("任务 %s 上一次还没跑完，本次跳过", key)
-		s.record(context.Background(), key, domain.JobStatusSkipped, "上一次尚未结束", time.Now(), 0)
+		s.record(context.Background(), key, trigger, domain.JobStatusSkipped, "上一次尚未结束", time.Now(), 0)
 		return
 	}
 	defer lock.Unlock()
@@ -291,18 +319,18 @@ func (s *JobService) execute(ctx context.Context, key string) {
 
 	if err != nil {
 		log.Printf("任务 %s 执行失败（%s）: %v", key, elapsed.Round(time.Millisecond), err)
-		s.record(ctx, key, domain.JobStatusFailed, truncateBytes(err.Error(), jobErrorLimit), start, int(elapsed.Milliseconds()))
+		s.record(ctx, key, trigger, domain.JobStatusFailed, truncateBytes(err.Error(), jobErrorLimit), start, int(elapsed.Milliseconds()))
 		return
 	}
 	log.Printf("任务 %s 执行成功（%s）", key, elapsed.Round(time.Millisecond))
-	s.record(ctx, key, domain.JobStatusSuccess, "", start, int(elapsed.Milliseconds()))
+	s.record(ctx, key, trigger, domain.JobStatusSuccess, "", start, int(elapsed.Milliseconds()))
 }
 
-func (s *JobService) record(ctx context.Context, key, status, errMsg string, ranAt time.Time, ms int) {
+func (s *JobService) record(ctx context.Context, key, trigger, status, errMsg string, ranAt time.Time, ms int) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	if err := s.repo.RecordRun(ctx, key, status, errMsg, ranAt, ms); err != nil {
+	if err := s.repo.RecordRun(ctx, key, trigger, status, errMsg, ranAt, ms); err != nil {
 		// 记录失败不影响任务本身，但不能静默——否则界面上会一直显示旧结果
 		log.Printf("记录任务 %s 的执行结果失败: %v", key, err)
 	}

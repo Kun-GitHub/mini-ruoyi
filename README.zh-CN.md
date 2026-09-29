@@ -211,7 +211,7 @@ make db-clean    清掉 server/data.db 里开发期产生的数据，提交前�
 **已实现**：分层骨架、统一响应契约、SQLite 连接与迁移、静态资源托管、按 IP 限流、
 前端工具链与 i18n。
 
-**后端已完成**：认证（session + CSRF）、RBAC 鉴权（33 个受权限保护的端点，权限码在代码里声明并启动校验）、
+**后端已完成**：认证（session + CSRF）、RBAC 鉴权（34 个受权限保护的端点，权限码在代码里声明并启动校验）、
 用户 / 角色 / 菜单 / 权限码的完整 CRUD、删除确认与守卫、版本化迁移。
 表结构见 [docs/schema.md](docs/schema.md)，接口见 [server/README.md](server/README.md)。
 
@@ -222,7 +222,6 @@ make db-clean    清掉 server/data.db 里开发期产生的数据，提交前�
 
 - 多标签页的**状态持久化**（刷新后只保留当前页的标签）
 - 列表导出（CSV / Excel）
-- 任务执行历史（现在 job 行上只存最近一次结果）
 - 登录失败锁定
 
 详见 [docs/architecture.md](docs/architecture.md) 的待办清单。

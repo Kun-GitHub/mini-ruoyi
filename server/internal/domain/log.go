@@ -8,6 +8,13 @@ const (
 	LoginFailed  = "failed"
 )
 
+// 任务触发方式的取值。把「定时跑的」和「人点的」分开记，
+// 因为「这个任务怎么一天跑了好几遍」的答案通常就在这一列。
+const (
+	JobTriggerCron   = "cron"
+	JobTriggerManual = "manual"
+)
+
 // LoginLog 是一次登录尝试。成功与失败都记：只记成功的话，
 // 「有人在暴力破解」这件事就完全看不出来。
 //
@@ -21,6 +28,23 @@ type LoginLog struct {
 	Reason    string `json:"reason"`
 	IP        string `json:"ip"`
 	UserAgent string `json:"user_agent"`
+}
+
+// JobLog 是一次定时任务的执行记录。与登录/操作日志同族：只追加、不修改，
+// 所以没有 updated_at。
+//
+// 不存任务描述之类的展示文案——那是代码注册表的职责；
+// 只留 job_key，任务从代码里删掉后历史仍然可读（哪怕只剩原始 key）。
+type JobLog struct {
+	ID        int64     `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	JobKey    string    `json:"job_key"`
+	// Trigger 是触发方式：cron（调度器）或 manual（界面上点了立即执行）
+	Trigger string `json:"trigger"`
+	Status  string `json:"status"`
+	// Error 是失败原因或跳过原因（来自任务的 error），成功时为空
+	Error      string `json:"error"`
+	DurationMS int    `json:"duration_ms"`
 }
 
 // OperLog 是一次写操作的审计记录。

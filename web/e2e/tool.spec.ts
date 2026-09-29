@@ -93,6 +93,39 @@ test.describe('定时任务', () => {
     await expect(row.getByRole('cell').nth(3)).toHaveText('—')
   })
 
+  test('能看到每次执行的记录', async ({ page }) => {
+    await loginAsAdmin(page)
+    await openPage(page, '定时任务')
+
+    // 挑一个其它用例不会触发的任务：这样「共 0 条」在整轮里都成立。
+    // 用 cleanup:orphan_files 不行——上一个用例刚跑过它
+    const row = page.getByRole('row').filter({ hasText: 'cleanup:expired_sessions' })
+
+    // 全新库里还没有任何执行记录
+    await row.getByRole('button', { name: '执行历史' }).click()
+    let dialog = page.getByRole('dialog')
+    await expect(dialog.getByText('共 0 条')).toBeVisible()
+    await expect(dialog.getByText('暂无数据')).toBeVisible()
+    await dialog.getByRole('button', { name: '关闭' }).click()
+    await expect(dialog).toBeHidden()
+
+    // 跑一次，历史里就该出现那一次
+    await row.getByRole('button', { name: '立即执行' }).click()
+    await expectToast(page, /已触发/)
+    await expect(row.getByRole('cell', { name: '成功' })).toBeVisible({ timeout: 10000 })
+
+    await row.getByRole('button', { name: '执行历史' }).click()
+    dialog = page.getByRole('dialog')
+    await expect(dialog.getByText('共 1 条')).toBeVisible()
+    // 触发方式必须是「手动」：这是点了「立即执行」跑出来的，不是调度器跑出来的。
+    // 两者分不开的话，「这个任务怎么今天跑了好几遍」就没法回答。
+    await expect(dialog.getByRole('cell', { name: '手动' })).toBeVisible()
+    await expect(dialog.getByRole('cell', { name: '成功' })).toBeVisible()
+    await expect(dialog.getByRole('cell', { name: '定时' })).toHaveCount(0)
+    // 新增的键漏登记的话，这里会原样显示 job.log.xxx
+    await expect(dialog.getByText(/^job\./)).toHaveCount(0)
+  })
+
   test('任务菜单在系统工具目录下', async ({ page }) => {
     await loginAsAdmin(page)
     await expect(sidebar(page).getByRole('button', { name: '系统工具', exact: true })).toBeVisible()

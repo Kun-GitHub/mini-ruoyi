@@ -7,13 +7,15 @@ import (
 	"testing"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"mini-ruoyi/internal/domain"
 )
 
 // migrationCount 是 migrations/ 下的文件数。
 //
 // 这里写死而不是动态统计：新增迁移时必须显式改这个数字，
 // 从而强制作者想一想「新迁移是否也该有对应的验证」。
-const migrationCount = 10
+const migrationCount = 11
 
 func TestMigrateCreatesSchemaAndIsIdempotent(t *testing.T) {
 	db, err := NewDB(filepath.Join(t.TempDir(), "migrate.db"))
@@ -41,6 +43,21 @@ func TestMigrateCreatesSchemaAndIsIdempotent(t *testing.T) {
 	if _, err := db.ExecContext(ctx,
 		`INSERT INTO sys_menus (title_key) VALUES (?)`, "menu.test"); err != nil {
 		t.Fatalf("写入 sys_menus: %v", err)
+	}
+
+	// 0012 建的任务执行日志：写一条真记录，并验证 CHECK 真的在拦。
+	// 列名里有 trigger / error 这两个词，SQLite 允许它们当列名但必须实测——
+	// 写不进去的话，任务执行成功而历史记录静默丢失。
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO sys_job_logs (job_key, trigger, status, error, duration_ms)
+		VALUES (?, ?, ?, ?, ?)`,
+		"cleanup:old_logs", domain.JobTriggerCron, domain.JobStatusSuccess, "", 12); err != nil {
+		t.Fatalf("写入 sys_job_logs: %v", err)
+	}
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO sys_job_logs (job_key, trigger, status) VALUES (?, ?, ?)`,
+		"cleanup:old_logs", "scheduler", domain.JobStatusSuccess); err == nil {
+		t.Error("sys_job_logs.trigger 的 CHECK 没拦住非法触发方式")
 	}
 }
 

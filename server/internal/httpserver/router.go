@@ -161,6 +161,9 @@ func NewRouter(deps Deps) (*gin.Engine, *RouteTable, error) {
 	reg.protect(http.MethodPut, "/jobs/:key", perm.ToolJobEdit, deps.Job.Update)
 	// 手动触发与改 cron 分开授权：能改调度时间不等于能立刻把任务跑起来
 	reg.protect(http.MethodPost, "/jobs/:key/run", perm.ToolJobRun, deps.Job.RunNow)
+	// 每次执行（含被跳过的）都留一条历史，看历史只需「能看任务清单」这一条权限：
+	// 执行结果本来就是列表页上的内容，不该变成一个新的授权点
+	reg.protect(http.MethodGet, "/jobs/:key/logs", perm.ToolJobList, deps.Job.ListLogs)
 
 	reg.protect(http.MethodGet, "/files", perm.ToolFileList, deps.File.List)
 	// 下载也走权限校验：上传的文件**不能静态挂载**，

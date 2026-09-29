@@ -329,6 +329,11 @@ re-issue the request.
 
 Retention is controlled by `APP_LOG_RETENTION_DAYS`, 30 days by default.
 
+**Job execution logs (`sys_job_logs`) take the other road: they are written synchronously**, in the same transaction as
+`sys_jobs.last_*` (see [schema.en.md](schema.en.md) §3.11). A job runs a few times a day, so batching buys nothing —
+and "the list says this run succeeded while the history has no such row" is not an acceptable inconsistency. Run
+history therefore has no 2-second lag: a refresh shows it immediately.
+
 ## 5.3 Three security constraints on uploads
 
 | Constraint | Reason |
@@ -351,6 +356,9 @@ no safe way to reflectively call an arbitrary function.
 
 So jobs are registered in code (`internal/job`) and the database only stores the on/off switch and the cron expression.
 The UI offers no "new job" button — a job created there would never run.
+
+The database does also hold **execution results** (the latest in `sys_jobs.last_*`, plus one row per run in
+`sys_job_logs`). Those are two different things: *what a job is* can only live in code, while *how it ran* is data.
 
 At startup the registry is upserted (`ON CONFLICT DO NOTHING`, so user-edited values are not overwritten), and keys that
 exist in the database but not in the registry only produce a warning rather than refusing to start. **This is the

@@ -18,7 +18,7 @@ server/
     │   ├── consts.go               # 状态、菜单类型、内置角色编码
     │   ├── errors.go               # 错误哨兵 + DependentsError / DuplicateError
     │   ├── user.go · rbac.go       # User；Role / Menu / MenuNode
-    │   ├── session.go · log.go     # Session / SessionView；LoginLog / OperLog
+    │   ├── session.go · log.go     # Session / SessionView；LoginLog / OperLog / JobLog
     │   └── file.go · job.go        # File / FileUsage；Job
     ├── httpx/response.go           # 统一响应信封、错误键、错误→HTTP 状态码映射
     ├── perm/perm.go                # 权限码常量与分组，不查库
@@ -153,7 +153,7 @@ srv.Shutdown(15s)                    优雅关闭
 
 ### 4.1 路由清单
 
-当前 38 个端点：**1 公开 + 4 自助 + 33 受权限保护**（下表省略 `/api/v1` 前缀）。
+当前 39 个端点：**1 公开 + 4 自助 + 34 受权限保护**（下表省略 `/api/v1` 前缀）。
 
 | 分组 | 端点 |
 | --- | --- |
@@ -164,12 +164,16 @@ srv.Shutdown(15s)                    优雅关闭
 | 用户 | `GET /users`、`GET /users/:id`、`POST /users`、`PUT /users/:id`、`PUT /users/:id/roles`、`PUT /users/:id/password`、`DELETE /users/:id` |
 | 权限清单 | `GET /perms` |
 | 文件 | `GET /files`、`GET /files/:id/download`、`POST /files`、`DELETE /files/:id` |
-| 任务 | `GET /jobs`、`PUT /jobs/:key`、`POST /jobs/:key/run` |
+| 任务 | `GET /jobs`、`PUT /jobs/:key`、`POST /jobs/:key/run`、`GET /jobs/:key/logs` |
 | 监控 | `GET /system`、`GET /sessions`、`DELETE /sessions/:hash`、`DELETE /users/:id/sessions`、`GET /login-logs`、`GET /oper-logs` |
 
 读与写的权限码分开声明：「能看」等于「能改」是常见的授权漏洞，所以
 `GET /roles/:id/grants` 用 `list` 码而 `PUT /roles/:id/grants` 用 `edit` 码，
 `POST /jobs/:key/run`（立刻跑一次）与 `PUT /jobs/:key`（改调度）也各用各的。
+
+反过来，**读接口不另开权限码**：执行历史挂在现有任务的 `list` 码下面。
+「这个任务上次跑成什么样」本来就在列表页上，再要一个码意味着
+既有角色升级后突然看不到自己原本能看到的东西。
 
 ### 4.2 两个容易踩的坑
 
@@ -345,7 +349,7 @@ cd server && go test ./...        # 全部
 go test ./... -run TestNewDB      # 单个
 ```
 
-当前 115 个用例，分布在 15 个测试文件里。`handler` / `job` / `auth` / `domain` / `cmd/server`
+当前 126 个用例，分布在 17 个测试文件里。`handler` / `job` / `auth` / `domain` / `cmd/server`
 没有独立测试文件——它们的正确性由 `httpserver` 的端到端用例覆盖（handler 的每个分支
 基本都对应一条 HTTP 断言）。
 
@@ -365,6 +369,8 @@ go test ./... -run TestNewDB      # 单个
 | `middleware/middleware_test.go` | 限流按 IP、伪造 `X-Forwarded-For` 无效、请求体上限、缓存头只匹配前缀 |
 | `system/system_test.go` | `/proc/stat` / `meminfo` / `statm` / `loadavg` 的解析（用真实样本）、`guest` 不计两次、单位与不可用标记、非 Linux 平台自报不可用 |
 | `httpserver/monitor_test.go` | 会话列表与踢人、不能踢自己、登录日志记录成败与来源、操作日志记录写操作与 403、**操作日志不含请求体** |
+| `service/job_log_test.go` | 每次执行（成功 / 失败 / 跳过）都留一条记录与触发方式、**两条写库是同一个事务**（第二条失败时 `last_run_at` 不跟着变）、日志按保留期清理且不误删新记录 |
+| `httpserver/job_logs_test.go` | 执行历史的三层授权（401 / 403 / `tool:job:list` 放行）、**触发一次后历史里真出现那一条**、未注册的 key 返回 404、页码越界钳到最后一页 |
 | `httpserver/fixture_test.go` | 不是用例，是被各测试复用的夹具（临时库 + 完整路由） |
 | `httpserver/router_test.go` 的 `TestPanicReturnsEnvelope` | **panic 也要返回信封**——空 body 的 500 会让前端把「后端出错」误判成「后端没起来」 |
 
@@ -395,7 +401,7 @@ CI 是冷缓存所以不受影响；本地请用 `make test` 或 `make check`。
 以新增 `widget` 为例：
 
 1. `domain/widget.go` — 实体 + JSON tag
-2. `repository/migrations/0012_init_widgets.sql` — 建表 DDL（现有编号最大到 `0011`）
+2. `repository/migrations/0013_init_widgets.sql` — 建表 DDL（现有编号最大到 `0012`）
 3. `repository/widget_repository.go` — 单表 CRUD，判空返回 `domain.ErrNotFound`
 4. `service/widget_service.go` — 业务规则、分页归一化
 5. `handler/widget_handler.go` — 绑定 + 校验 + 调 service，错误交给 `httpx.FailBindError` / `FailFromError`

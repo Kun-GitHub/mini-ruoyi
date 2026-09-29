@@ -28,6 +28,22 @@ func (h *JobHandler) List(c *gin.Context) {
 	httpx.Success(c, gin.H{"list": list, "total": len(list)})
 }
 
+// ListLogs 返回某个任务的执行历史（成功 / 失败 / 跳过都在内）。
+//
+// 未注册的任务 key 同样走 404：清单以代码注册表为准，
+// 库里残留的已删任务不该在界面上留一个能点开的入口。
+func (h *JobHandler) ListLogs(c *gin.Context) {
+	key := c.Param("key")
+	page, pageSize := pageParams(c)
+
+	result, err := h.jobs.ListLogs(c.Request.Context(), key, page, pageSize)
+	if err != nil {
+		httpx.FailFromError(c, err)
+		return
+	}
+	httpx.Success(c, result)
+}
+
 type updateJobRequest struct {
 	// cron 是标准 5 段表达式（分 时 日 月 周），不是若依那种 6 段。
 	Cron   string `json:"cron" binding:"required,max=64"`

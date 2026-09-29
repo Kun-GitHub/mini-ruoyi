@@ -18,7 +18,7 @@ server/
     │   ├── consts.go               # statuses, menu types, built-in role codes
     │   ├── errors.go               # error sentinels + DependentsError / DuplicateError
     │   ├── user.go · rbac.go       # User; Role / Menu / MenuNode
-    │   ├── session.go · log.go     # Session / SessionView; LoginLog / OperLog
+    │   ├── session.go · log.go     # Session / SessionView; LoginLog / OperLog / JobLog
     │   └── file.go · job.go        # File / FileUsage; Job
     ├── httpx/response.go           # the response envelope, error keys, error → HTTP status mapping
     ├── perm/perm.go                # permission code constants and grouping; no database access
@@ -155,7 +155,7 @@ and a wrong one panics at startup).
 
 ### 4.1 Route list
 
-38 endpoints today: **1 public + 4 self-service + 33 permission-protected** (the `/api/v1` prefix is omitted below).
+39 endpoints today: **1 public + 4 self-service + 34 permission-protected** (the `/api/v1` prefix is omitted below).
 
 | Group | Endpoints |
 | --- | --- |
@@ -166,12 +166,16 @@ and a wrong one panics at startup).
 | Users | `GET /users`, `GET /users/:id`, `POST /users`, `PUT /users/:id`, `PUT /users/:id/roles`, `PUT /users/:id/password`, `DELETE /users/:id` |
 | Permission list | `GET /perms` |
 | Files | `GET /files`, `GET /files/:id/download`, `POST /files`, `DELETE /files/:id` |
-| Jobs | `GET /jobs`, `PUT /jobs/:key`, `POST /jobs/:key/run` |
+| Jobs | `GET /jobs`, `PUT /jobs/:key`, `POST /jobs/:key/run`, `GET /jobs/:key/logs` |
 | Monitoring | `GET /system`, `GET /sessions`, `DELETE /sessions/:hash`, `DELETE /users/:id/sessions`, `GET /login-logs`, `GET /oper-logs` |
 
 Read and write permission codes are declared separately: "can view" implying "can modify" is a common authorization
 hole, so `GET /roles/:id/grants` uses the `list` code while `PUT /roles/:id/grants` uses the `edit` code, and
 `POST /jobs/:key/run` (run once now) and `PUT /jobs/:key` (change the schedule) each get their own.
+
+Conversely, **read endpoints reuse an existing code**: run history hangs off the jobs' `list` code. "What did that
+job do last time" is already on the list page, so a second code would mean existing roles suddenly lose sight of
+something they could see before.
 
 ### 4.2 Two easy traps
 
@@ -351,7 +355,7 @@ cd server && go test ./...        # everything
 go test ./... -run TestNewDB      # one test
 ```
 
-There are 115 cases across 15 test files today. `handler` / `job` / `auth` / `domain` / `cmd/server` have no test files of
+There are 126 cases across 17 test files today. `handler` / `job` / `auth` / `domain` / `cmd/server` have no test files of
 their own — their correctness is covered by the end-to-end cases in `httpserver` (essentially every branch of a handler
 maps to one HTTP assertion).
 
@@ -371,6 +375,8 @@ maps to one HTTP assertion).
 | `middleware/middleware_test.go` | rate limiting per IP, spoofed `X-Forwarded-For` being ignored, the request body cap, cache headers matching the prefix only |
 | `system/system_test.go` | parsing `/proc/stat` / `meminfo` / `statm` / `loadavg` (using real samples), `guest` not counted twice, units and the unavailable flag, non-Linux platforms reporting unavailability |
 | `httpserver/monitor_test.go` | the session list and kicking, not being able to kick yourself, login logs recording success and origin, operation logs recording writes and 403s, **operation logs containing no request bodies** |
+| `service/job_log_test.go` | every run (success / failure / skip) leaves a record with its trigger, **both writes share one transaction** (when the second fails, `last_run_at` does not move), logs are cleaned up by retention without touching fresh rows |
+| `httpserver/job_logs_test.go` | the three authorization layers on run history (401 / 403 / `tool:job:list` allows), **one trigger makes exactly one row appear**, an unregistered key returns 404, an out-of-range page is clamped to the last one |
 | `httpserver/fixture_test.go` | not a test case but the fixture the other tests reuse (a temporary database plus the full router) |
 | `TestPanicReturnsEnvelope` in `httpserver/router_test.go` | **a panic still returns the envelope** — a 500 with an empty body makes the frontend mistake "the backend errored" for "the backend is not up" |
 
@@ -403,7 +409,7 @@ of 500s.
 Take a new `widget` as the example:
 
 1. `domain/widget.go` — the entity plus JSON tags
-2. `repository/migrations/0012_init_widgets.sql` — the table DDL (the highest existing number is `0011`)
+2. `repository/migrations/0013_init_widgets.sql` — the table DDL (the highest existing number is `0012`)
 3. `repository/widget_repository.go` — single-table CRUD, returning `domain.ErrNotFound` when absent
 4. `service/widget_service.go` — business rules, pagination normalization
 5. `handler/widget_handler.go` — bind + validate + call the service, handing errors to `httpx.FailBindError` / `FailFromError`

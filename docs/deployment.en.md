@@ -174,4 +174,5 @@ Users get the new version on refresh (`index.html` is `no-cache` and `assets/*` 
 | You are logged out immediately after logging in | `APP_SECURE_COOKIE=true` while browsing over HTTP, so the browser never sends the cookie back |
 
 Runtime state is visible on the **System monitoring** page (CPU / memory / disk / Go process), and scheduled job state
-is under **System tools → Scheduled jobs**, including "did the last run succeed" and when the next one is due.
+is under **System tools → Scheduled jobs**, including "did the last run succeed" and when the next one is due. The
+**execution history** button on a job shows every run's trigger, result and duration.

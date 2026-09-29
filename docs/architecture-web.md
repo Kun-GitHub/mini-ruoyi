@@ -98,7 +98,7 @@ web/
 
 ```
 src/lib/i18n/
-├── zh-CN.ts          # 唯一真源，as const（当前 302 个键）
+├── zh-CN.ts          # 唯一真源，as const（当前 310 个键）
 ├── en-US.ts          # Record<keyof typeof zhCN, string> → 缺键是编译错误
 ├── index.svelte.ts   # 语言状态（$state）+ t() + 持久化
 └── errors.ts         # 字段级错误的唯一渲染入口：fieldLabel() + validationText() + fieldErrorOf()
@@ -444,10 +444,10 @@ web/dist/assets/*     →  /assets/*，Cache-Control: immutable
 | 文件 | 原始 | gzip |
 | --- | --- | --- |
 | `index.html` | 0.5 KB | 0.3 KB |
-| `assets/index-*.css` | 42.6 KB | 8.2 KB |
-| `assets/index-*.js` | 307 KB | **88 KB** |
+| `assets/index-*.css` | 42.7 KB | 8.2 KB |
+| `assets/index-*.js` | 312 KB | **89 KB** |
 | `assets/*.woff2`（Inter 可变字体全部子集） | 213 KB | — |
-| 总计（12 个文件） | 578 KB | — |
+| 总计（12 个文件） | 583 KB | — |
 
 字体是最大的一块。若只面向中英文，可裁成 latin + latin-ext 子集。
 
@@ -483,8 +483,8 @@ npm run build       # 生产构建
 | 层 | 命令 | 覆盖 |
 | --- | --- | --- |
 | 类型与模板 | `npm run check` | svelte-check + tsc |
-| 接口契约 | `make test` | 后端 115 个用例（CGO 无关的正确性都在这层） |
-| 真实交互 | `make test-e2e` | Playwright + Chromium，11 个 spec / 77 个用例 |
+| 接口契约 | `make test` | 后端 126 个用例（CGO 无关的正确性都在这层） |
+| 真实交互 | `make test-e2e` | Playwright + Chromium，11 个 spec / 78 个用例 |
 
 E2E 走 `webServer` 自动起一个**用临时库的后端**，每次运行前清库——
 残留数据会让「共 N 条」这类断言变成依赖执行顺序，非常难查。

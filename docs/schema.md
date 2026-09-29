@@ -34,6 +34,7 @@
 | `sys_oper_logs` | 审计 | 写操作审计 |
 | `sys_files` | 工具 | 文件元数据。文件本体在磁盘上 |
 | `sys_jobs` | 工具 | 定时任务的**可调参数**。任务本体在代码里 |
+| `sys_job_logs` | 审计 | 任务执行历史。每次执行（含被跳过）一条，只追加
 
 ## 3. 字段定义
 
@@ -210,15 +211,39 @@
 | `job_key` | 稳定标识，与代码注册表一一对应 |
 | `cron` | 标准 5 段表达式（分 时 日 月 周），按**服务器本地时区**执行 |
 | `status` | `active` / `inactive` |
-| `last_run_at` / `last_status` / `last_error` / `last_duration_ms` | 最近一次执行结果 |
-
-**不建执行历史表**：核心问题是「上次成功了吗」，这四个字段就能回答。
-要历史再加表，现在建了只会多一张需要清理的表。
+| `last_run_at` / `last_status` / `last_error` / `last_duration_ms` | 最近一次执行结果。列表页的快路径，不用聚合子表 |
 
 `last_status` 有 `skipped` 一态：表示这次因为「上一次还没跑完」被跳过。
 单独一个状态是有必要的——它解释「为什么今天没跑」。
 
-### 3.11 为什么任务不能像若依那样存在库里
+**执行历史另建一表**（`sys_job_logs`，见 §3.11）：这四个字段只留最近一次，
+而「这个任务最近十次跑了多久」「昨晚那次为什么失败」答不上来。
+保留期不另设配置，共用 `sys_login_logs` / `sys_oper_logs` 的
+`APP_LOG_RETENTION_DAYS`（默认 30 天）——「日志保留多久」是一个问题，
+不该有两个答案。
+
+### 3.11 `sys_job_logs`
+
+任务执行历史。追加写，每次执行一行。
+
+| 列 | 说明 |
+| --- | --- |
+| `job_key` | 与代码注册表对应。**不设外键**——任务从代码里删掉后，它跑过的记录必须留下 |
+| `trigger` | `cron`（调度器触发）/ `manual`（界面上点了「立即执行」）。「这个任务怎么跑了两遍」的答案通常就在这一列 |
+| `status` | `success` / `failed` / `skipped`，与 `sys_jobs.last_status` 取值一致，但**没有空串**——只有真的跑过（或被跳过）才会写这行 |
+| `error` | 失败或跳过原因，成功时为空 |
+| `duration_ms` | 耗时 |
+
+与其余审计表同规矩：**没有 `updated_at`**，只追加不修改。
+`created_at` 用执行开始时间，与 `sys_jobs.last_run_at` 是同一个时刻。
+
+写入方式：追加日志行与更新 `sys_jobs.last_*` 在**同一个事务**里完成。
+分开写的话，进程恰好停在两次写中间，就会留下「列表说上次成功了、
+历史里却查不到」这种自相矛盾的两份现实。
+
+索引：`(job_key, id)`（按任务翻历史）、`created_at`（保留期清理）。
+
+### 3.12 为什么任务不能像若依那样存在库里
 
 若依是「数据库存 cron + 反射调用 bean 方法」。**Go 里这条路走不通**：
 没有安全的反射调用任意函数的方式。
@@ -316,6 +341,19 @@ CREATE TABLE sys_jobs (
     last_error       varchar(255) NOT NULL DEFAULT '',
     last_duration_ms INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE sys_job_logs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    job_key    varchar(64) NOT NULL,
+    trigger    varchar(16) NOT NULL CHECK (trigger IN ('cron', 'manual')),
+    status     varchar(16) NOT NULL CHECK (status IN ('success', 'failed', 'skipped')),
+    error      varchar(255) NOT NULL DEFAULT '',
+    duration_ms INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX idx_job_logs_key     ON sys_job_logs (job_key, id);
+CREATE INDEX idx_job_logs_created ON sys_job_logs (created_at);
 
 CREATE TABLE sys_login_logs (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

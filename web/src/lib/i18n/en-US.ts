@@ -89,6 +89,7 @@ export const enUS: Record<keyof typeof zhCN, string> = {
   'common.all': 'All',
   'common.ok': 'OK',
   'common.cancel': 'Cancel',
+  'common.close': 'Close',
   'common.confirm': 'Confirm',
   'common.delete': 'Delete',
   'common.edit': 'Edit',
@@ -250,6 +251,15 @@ export const enUS: Record<keyof typeof zhCN, string> = {
   'job.status.success': 'Success',
   'job.status.failed': 'Failed',
   'job.status.skipped': 'Skipped',
+
+  // Run history: one row per run (skipped ones included), opened from the job row
+  'job.logs': 'Run history',
+  'job.log.title': 'Run history',
+  'job.log.hint': 'Every run leaves a record, including skipped ones. Records older than the log retention period (30 days by default) are removed by the "Clean up expired logs" job.',
+  'job.log.trigger': 'Trigger',
+  'job.log.trigger.cron': 'Scheduled',
+  'job.log.trigger.manual': 'Manual',
+  'job.log.detail': 'Detail',
 
   'job.cleanupExpiredSessions': 'Clean up expired sessions',
   'job.cleanupOldLogs': 'Clean up expired logs',

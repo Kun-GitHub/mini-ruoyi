@@ -33,8 +33,8 @@ make build && make run       # the binary and the frontend output land in bin/
 At startup any unapplied migrations run automatically and `data.db` is created if it does not exist.
 
 The `data.db` that ships in the repository is an **already initialized** database: every migration is recorded
-(`0002`–`0011` all applied) and its contents are identical to a freshly migrated one — one `admin` user, one built-in
-role, 13 menus and 3 jobs, with **no sessions, no logs and no test accounts**. It works out of the box.
+(`0002`–`0012` all applied) and its baseline contents are one `admin` user, one built-in role, 13 menus and 3 jobs. It
+works out of the box.
 
 ⚠️ **This same database is also the live development database** (when you start the backend from `server/`,
 `database.path` points at it). A single login writes sessions and logs into it, and they get committed along with
@@ -87,7 +87,7 @@ Everything lives under `/api/v1`. The full contract (envelope, error keys, delet
 At startup it prints the current endpoint breakdown:
 
 ```
-已注册 38 个 API 端点（公开 1 / 仅登录 4 / 需权限 33）
+已注册 39 个 API 端点（公开 1 / 仅登录 4 / 需权限 34）
 ```
 
 **How authentication works**: after login the server hands out an `mr_session` cookie (HttpOnly / SameSite=Lax).
@@ -136,6 +136,7 @@ response or from the `csrf_token` field of `/auth/me`.
 | GET | `/jobs` | `tool:job:list` | scheduled jobs (from the code registry) |
 | PUT | `/jobs/:key` | `tool:job:edit` | change the cron / enable-disable; **rescheduled immediately** |
 | POST | `/jobs/:key/run` | `tool:job:run` | run once now (asynchronously; refresh the list to see the result) |
+| GET | `/jobs/:key/logs` | `tool:job:list` | that job's run history (paged, newest first) |
 | GET | `/healthz` | — **(public)** | liveness; really pings the database |
 
 ### "Your own" and "someone else's" are two separate sets of endpoints
@@ -304,7 +305,6 @@ The complete 8-step recipe for adding a resource is in that same document.
 ## Not implemented yet
 
 - **Login-failure lockout**: today only a login log is written; failures are not counted and accounts are not locked
-- **Job execution history**: `sys_jobs` holds only the most recent run's result; there is no history table
 - **List export**: users/roles/logs have no export endpoint
 
 The `devices` sample resource has been removed: under a fail-closed permission model it would either pollute the

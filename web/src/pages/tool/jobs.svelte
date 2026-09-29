@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
 
   import { ApiError, api } from '$lib/api/client'
-  import type { Job } from '$lib/api/types'
+  import type { Job, JobLog, Page } from '$lib/api/types'
   import { Badge } from '$lib/components/ui/badge'
   import { Button } from '$lib/components/ui/button'
   import {
@@ -97,6 +97,45 @@
     }
   }
 
+  // ---- 执行历史 ----
+
+  const LOG_PAGE_SIZE = 20
+  let logTarget = $state<Job | null>(null)
+  let logs = $state<JobLog[]>([])
+  let logTotal = $state(0)
+  let logPage = $state(1)
+  let logLoading = $state(false)
+  const logTotalPages = $derived(Math.max(1, Math.ceil(logTotal / LOG_PAGE_SIZE)))
+
+  async function openLogs(job: Job) {
+    logTarget = job
+    logPage = 1
+    await loadLogs()
+  }
+
+  async function loadLogs() {
+    if (!logTarget) return
+    logLoading = true
+    try {
+      const q = new URLSearchParams({ page: String(logPage), page_size: String(LOG_PAGE_SIZE) })
+      const res = await api.get<Page<JobLog>>(`/jobs/${logTarget.job_key}/logs?${q}`)
+      logs = res.list
+      logTotal = res.total
+      // 页码越界时后端会钳到最后一页，跟着它走，免得停在空页上
+      logPage = res.page
+    } catch (err) {
+      notifyError(err instanceof ApiError ? err.key : 'error.internal')
+    } finally {
+      logLoading = false
+    }
+  }
+
+  function closeLogs() {
+    logTarget = null
+    logs = []
+    logTotal = 0
+  }
+
   function formatTime(v: string | null): string {
     return v ? new Date(v).toLocaleString() : t('job.never')
   }
@@ -169,6 +208,11 @@
               {/if}
             </TableCell>
             <TableCell class="text-right whitespace-nowrap">
+              {#if session.can('tool:job:list')}
+                <Button variant="ghost" size="sm" onclick={() => openLogs(job)}>
+                  {t('job.logs')}
+                </Button>
+              {/if}
               {#if session.can('tool:job:run')}
                 <Button
                   variant="ghost"
@@ -225,5 +269,102 @@
         <Button type="submit" disabled={saving}>{t('common.save')}</Button>
       </DialogFooter>
     </form>
+  </DialogContent>
+</Dialog>
+
+<Dialog open={logTarget !== null} onOpenChange={(open) => !open && closeLogs()}>
+  <DialogContent class="max-w-2xl">
+    <DialogHeader>
+      <DialogTitle>{logTarget ? tKey(logTarget.description_key) : ''}</DialogTitle>
+      <DialogDescription>{t('job.log.hint')}</DialogDescription>
+    </DialogHeader>
+
+    <div class="py-2">
+      <p class="text-sm text-muted-foreground">{t('common.total', { total: logTotal })}</p>
+
+      <div class="mt-2 rounded-lg border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t('common.time')}</TableHead>
+              <TableHead>{t('job.log.trigger')}</TableHead>
+              <TableHead>{t('common.status')}</TableHead>
+              <TableHead class="text-right">{t('job.duration')}</TableHead>
+              <TableHead>{t('job.log.detail')}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {#if logs.length === 0}
+              <TableRow>
+                <TableCell colspan={5} class="py-10 text-center text-muted-foreground">
+                  {logLoading ? t('common.loading') : t('common.empty')}
+                </TableCell>
+              </TableRow>
+            {/if}
+            {#each logs as log (log.id)}
+              <TableRow>
+                <TableCell class="text-muted-foreground whitespace-nowrap">
+                  {formatTime(log.created_at)}
+                </TableCell>
+                <TableCell>
+                  {t(`job.log.trigger.${log.trigger}` as 'job.log.trigger.cron')}
+                </TableCell>
+                <TableCell>
+                  <Badge
+                    variant={log.status === 'success'
+                      ? 'default'
+                      : log.status === 'skipped'
+                        ? 'secondary'
+                        : 'destructive'}
+                  >
+                    {t(`job.status.${log.status}` as 'job.status.success')}
+                  </Badge>
+                </TableCell>
+                <TableCell class="text-right text-muted-foreground tabular-nums">
+                  {log.duration_ms} ms
+                </TableCell>
+                <TableCell>
+                  {#if log.error}
+                    <div class="max-w-64 truncate text-xs text-destructive" title={log.error}>
+                      {log.error}
+                    </div>
+                  {:else}
+                    <span class="text-muted-foreground">—</span>
+                  {/if}
+                </TableCell>
+              </TableRow>
+            {/each}
+          </TableBody>
+        </Table>
+      </div>
+
+      {#if logTotalPages > 1}
+        <div class="mt-3 flex items-center justify-end gap-2 text-sm">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={logPage <= 1}
+            onclick={() => {
+              logPage -= 1
+              void loadLogs()
+            }}>‹</Button
+          >
+          <span class="text-muted-foreground tabular-nums">{logPage} / {logTotalPages}</span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={logPage >= logTotalPages}
+            onclick={() => {
+              logPage += 1
+              void loadLogs()
+            }}>›</Button
+          >
+        </div>
+      {/if}
+    </div>
+
+    <DialogFooter>
+      <Button type="button" variant="outline" onclick={closeLogs}>{t('common.close')}</Button>
+    </DialogFooter>
   </DialogContent>
 </Dialog>

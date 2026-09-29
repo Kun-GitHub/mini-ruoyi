@@ -194,6 +194,19 @@ export type Job = {
   next_run_at: string | null
 }
 
+export type JobLog = {
+  id: number
+  /** 执行开始时间，与任务列表上的「上次执行」同源 */
+  created_at: string
+  job_key: string
+  /** cron = 调度器触发，manual = 界面上点了「立即执行」 */
+  trigger: 'cron' | 'manual'
+  status: 'success' | 'failed' | 'skipped'
+  /** 失败原因或跳过原因，成功时为空 */
+  error: string
+  duration_ms: number
+}
+
 export type PermEndpoint = {
   method: string
   path: string

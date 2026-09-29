@@ -96,11 +96,63 @@ func (r *JobRepository) Update(ctx context.Context, key, cron, status, remark st
 	return requireAffected(res)
 }
 
-// RecordRun 记录一次执行结果。
-func (r *JobRepository) RecordRun(ctx context.Context, key, status, errMsg string, ranAt time.Time, durationMS int) error {
-	_, err := r.db.ExecContext(ctx, `
+// RecordRun 记录一次执行：更新 sys_jobs 上的「最近一次」，并追加一条历史。
+//
+// 两条写在同一个事务里。分开写的话，进程恰好停在两次写中间，就会留下
+// 「列表说上一次成功了、历史里查不到」这种自相矛盾的两份现实。
+func (r *JobRepository) RecordRun(ctx context.Context, key, trigger, status, errMsg string, ranAt time.Time, durationMS int) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // Commit 成功后这里是空操作
+
+	if _, err := tx.ExecContext(ctx, `
 		UPDATE sys_jobs
 		SET last_run_at = ?, last_status = ?, last_error = ?, last_duration_ms = ?
-		WHERE job_key = ?`, toDBTime(ranAt), status, errMsg, durationMS, key)
-	return err
+		WHERE job_key = ?`, toDBTime(ranAt), status, errMsg, durationMS, key); err != nil {
+		return err
+	}
+
+	// created_at 用执行开始时间，与 last_run_at 保持一致——
+	// 用 CURRENT_TIMESTAMP 的话，每次执行都会多一个几乎相同但不等的时刻
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO sys_job_logs (created_at, job_key, trigger, status, error, duration_ms)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		toDBTime(ranAt), key, trigger, status, errMsg, durationMS); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (r *JobRepository) CountRunLogs(ctx context.Context, key string) (int64, error) {
+	var n int64
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sys_job_logs WHERE job_key = ?`, key).Scan(&n)
+	return n, err
+}
+
+// ListRunLogs 按任务翻历史，最新一次在最前。
+//
+// 按 id 排序而不是 created_at：同一次执行的两个时刻毫秒级相邻，
+// 而 id 是严格递增的，翻页不会因为时间相同而抖动。
+func (r *JobRepository) ListRunLogs(ctx context.Context, key string, limit, offset int) ([]domain.JobLog, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, created_at, job_key, trigger, status, error, duration_ms
+		FROM sys_job_logs WHERE job_key = ?
+		ORDER BY id DESC LIMIT ? OFFSET ?`, key, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	list := make([]domain.JobLog, 0, limit)
+	for rows.Next() {
+		var l domain.JobLog
+		if err := rows.Scan(&l.ID, &l.CreatedAt, &l.JobKey, &l.Trigger, &l.Status, &l.Error, &l.DurationMS); err != nil {
+			return nil, err
+		}
+		list = append(list, l)
+	}
+	return list, rows.Err()
 }

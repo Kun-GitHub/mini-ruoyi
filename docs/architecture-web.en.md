@@ -102,7 +102,7 @@ Hand-written, about 130 lines, **zero runtime dependencies**.
 
 ```
 src/lib/i18n/
-├── zh-CN.ts          # the single source of truth, as const (302 keys today)
+├── zh-CN.ts          # the single source of truth, as const (310 keys today)
 ├── en-US.ts          # Record<keyof typeof zhCN, string> → a missing key is a compile error
 ├── index.svelte.ts   # locale state ($state) + t() + persistence
 └── errors.ts         # the single rendering path for field-level errors: fieldLabel() + validationText() + fieldErrorOf()
@@ -460,10 +460,10 @@ web/dist/assets/*     →  /assets/*, Cache-Control: immutable
 | File | Raw | gzip |
 | --- | --- | --- |
 | `index.html` | 0.5 KB | 0.3 KB |
-| `assets/index-*.css` | 42.6 KB | 8.2 KB |
-| `assets/index-*.js` | 307 KB | **88 KB** |
+| `assets/index-*.css` | 42.7 KB | 8.2 KB |
+| `assets/index-*.js` | 312 KB | **89 KB** |
 | `assets/*.woff2` (every Inter variable subset) | 213 KB | — |
-| Total (12 files) | 578 KB | — |
+| Total (12 files) | 583 KB | — |
 
 The font is the largest single piece. For Chinese and English only it could be trimmed to the latin + latin-ext subsets.
 
@@ -499,8 +499,8 @@ Three layers, each with its own job:
 | Layer | Command | Coverage |
 | --- | --- | --- |
 | Types and templates | `npm run check` | svelte-check + tsc |
-| Interface contract | `make test` | the backend's 115 cases (all correctness unrelated to CGO lives here) |
-| Real interaction | `make test-e2e` | Playwright + Chromium, 11 specs / 77 cases |
+| Interface contract | `make test` | the backend's 126 cases (all correctness unrelated to CGO lives here) |
+| Real interaction | `make test-e2e` | Playwright + Chromium, 11 specs / 78 cases |
 
 E2E goes through `webServer`, which automatically starts **a backend on a temporary database**, clearing it before every
 run — leftover data turns assertions like "N rows in total" into things that depend on execution order, which is very

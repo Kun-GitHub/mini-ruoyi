@@ -171,13 +171,16 @@ func (r *LogRepository) ListOperLogs(ctx context.Context, f OperLogFilter, limit
 	return list, rows.Err()
 }
 
-// DeleteLogsBefore 删除两张表里早于 cutoff 的记录，返回删除条数。
+// DeleteLogsBefore 删除三张日志表里早于 cutoff 的记录，返回删除条数。
 //
 // 一次删一批（LIMIT）而不是全删：保留期到点时会一次性积累很多行，
 // 一条 DELETE 长时间持有写锁会让所有请求排队。
+//
+// 任务执行日志也走这里：保留期是「日志保留多久」这一个问题的答案，
+// 单独给它一个配置意味着多一处会漂移的设置。
 func (r *LogRepository) DeleteLogsBefore(ctx context.Context, cutoff time.Time, limit int) (int64, error) {
 	var total int64
-	for _, table := range []string{"sys_login_logs", "sys_oper_logs"} {
+	for _, table := range []string{"sys_login_logs", "sys_oper_logs", "sys_job_logs"} {
 		res, err := r.db.ExecContext(ctx,
 			`DELETE FROM `+table+` WHERE id IN (
 				SELECT id FROM `+table+` WHERE created_at < ? LIMIT ?

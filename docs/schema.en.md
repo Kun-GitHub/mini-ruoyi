@@ -35,6 +35,7 @@ The original design (exported from PostgreSQL) had 10 tables and 89 columns; by 
 | `sys_oper_logs` | audit | write-operation auditing |
 | `sys_files` | tool | file metadata. The file itself lives on disk |
 | `sys_jobs` | tool | the **tunable parameters** of scheduled jobs. The jobs themselves live in code |
+| `sys_job_logs` | audit | job execution history. One row per run (skipped ones included), append-only |
 
 ## 3. Field definitions
 
@@ -219,15 +220,38 @@ directory degrades noticeably on some filesystems.
 | `job_key` | a stable identifier matching the code registry one-to-one |
 | `cron` | a standard 5-field expression (minute hour day month weekday), executed in the **server's local time zone** |
 | `status` | `active` / `inactive` |
-| `last_run_at` / `last_status` / `last_error` / `last_duration_ms` | the result of the most recent run |
-
-**No execution history table**: the core question is "did the last run succeed", and these four fields answer it. Add a
-table when history is needed; adding one now only creates another table to clean up.
+| `last_run_at` / `last_status` / `last_error` / `last_duration_ms` | the result of the most recent run. The fast path for the list page, with no aggregate query against a child table |
 
 `last_status` has a `skipped` state meaning this run was skipped because "the previous one had not finished". Having its
 own state matters — it explains "why did it not run today".
 
-### 3.11 Why jobs cannot live in the database the way RuoYi's do
+**Run history gets its own table** (`sys_job_logs`, see §3.11): those four fields hold only the latest run, so "how long
+has this job been taking over the last ten runs" and "why did last night's run fail" have no answer. Retention is not a
+separate setting — it shares `APP_LOG_RETENTION_DAYS` (30 days by default) with `sys_login_logs` / `sys_oper_logs`,
+because "how long do we keep logs" is one question and should not have two answers.
+
+### 3.11 `sys_job_logs`
+
+Job execution history. Append-only, one row per run.
+
+| Column | Notes |
+| --- | --- |
+| `job_key` | matches the code registry. **No foreign key** — a job deleted from code must keep the records of the runs it did |
+| `trigger` | `cron` (fired by the scheduler) / `manual` (someone clicked "run now"). "Why did this job run twice today" is usually answered by this column |
+| `status` | `success` / `failed` / `skipped`, the same values as `sys_jobs.last_status` but **without the empty string** — a row exists only when the job actually ran (or was skipped) |
+| `error` | the failure or skip reason; empty on success |
+| `duration_ms` | how long it took |
+
+Same rules as the other audit tables: **no `updated_at`**, append only, never modified.
+`created_at` is the run's start time, the same instant as `sys_jobs.last_run_at`.
+
+Writing: appending the log row and updating `sys_jobs.last_*` happen in **one transaction**. Writing them separately
+means a process that stops between the two writes leaves two contradictory realities — "the list says the last run
+succeeded, the history has no such row".
+
+Indexes: `(job_key, id)` for paging through one job's history, `created_at` for retention cleanup.
+
+### 3.12 Why jobs cannot live in the database the way RuoYi's do
 
 RuoYi stores a cron expression in the database and reflectively invokes a bean method. **That road does not exist in
 Go**: there is no safe way to reflectively call an arbitrary function.
@@ -326,6 +350,19 @@ CREATE TABLE sys_jobs (
     last_error       varchar(255) NOT NULL DEFAULT '',
     last_duration_ms INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE sys_job_logs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    job_key    varchar(64) NOT NULL,
+    trigger    varchar(16) NOT NULL CHECK (trigger IN ('cron', 'manual')),
+    status     varchar(16) NOT NULL CHECK (status IN ('success', 'failed', 'skipped')),
+    error      varchar(255) NOT NULL DEFAULT '',
+    duration_ms INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX idx_job_logs_key     ON sys_job_logs (job_key, id);
+CREATE INDEX idx_job_logs_created ON sys_job_logs (created_at);
 
 CREATE TABLE sys_login_logs (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

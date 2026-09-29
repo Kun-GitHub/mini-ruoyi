@@ -88,6 +88,7 @@ export const zhCN = {
   'common.all': '全部',
   'common.ok': '确定',
   'common.cancel': '取消',
+  'common.close': '关闭',
   'common.confirm': '确定',
   'common.delete': '删除',
   'common.edit': '编辑',
@@ -249,6 +250,15 @@ export const zhCN = {
   'job.status.success': '成功',
   'job.status.failed': '失败',
   'job.status.skipped': '已跳过',
+
+  // 执行历史：每次执行（含被跳过的）留一条，点任务行上的「执行历史」查看
+  'job.logs': '执行历史',
+  'job.log.title': '执行历史',
+  'job.log.hint': '每次执行都会留一条，包括被跳过的。超过日志保留期（默认 30 天）的记录由「清理过期日志」任务删除。',
+  'job.log.trigger': '触发方式',
+  'job.log.trigger.cron': '定时',
+  'job.log.trigger.manual': '手动',
+  'job.log.detail': '说明',
 
   'job.cleanupExpiredSessions': '清理过期会话',
   'job.cleanupOldLogs': '清理过期日志',
