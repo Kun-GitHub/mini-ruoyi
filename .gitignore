@@ -18,5 +18,3 @@ web/test-results/
 web/playwright-report/
 web/.playwright/
 
-# Go 构建输出（二进制 + 与其同级的 web/）
-bin/

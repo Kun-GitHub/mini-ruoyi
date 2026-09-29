@@ -18,6 +18,14 @@
 - **fail-closed 的权限模型**：注册业务端点必须声明权限码（否则启动 panic），
   未登录一律 401，缺权限一律 403；公开端点集合由测试钉死
 
+## 界面
+
+|  |  |
+| --- | --- |
+| ![登录页](docs/imgs/登录页.jpg) | ![用户管理](docs/imgs/用户管理.jpg) |
+| ![角色授权](docs/imgs/角色授权.jpg) | ![菜单管理](docs/imgs/菜单管理.jpg) |
+| ![文件管理](docs/imgs/文件管理.jpg) | ![服务监控](docs/imgs/服务监控.jpg) |
+
 ## 快速开始
 
 需要 Go 1.25+ 和 Node.js 20+（Node 仅用于构建前端）。
@@ -53,6 +61,14 @@ make dev-web               # 终端 2：Vite dev server :5173，/api 和 /health
 └── data.db             # SQLite 数据库，首次启动自动创建或使用随附的初始库
 ```
 
+服务器上实际就是这个样子——二进制、前端目录、数据库、上传目录都在同一个文件夹里：
+
+![服务器上的文件放置目录](docs/imgs/服务器-文件放置目录.jpg)
+
+前端目录里只是一个 `index.html` 加带内容哈希的 `assets/`：
+
+![服务器上的前端文件](docs/imgs/服务器-前端文件.jpg)
+
 systemd unit 与 nginx 配置都在仓库里，可直接用：
 
 ```bash
@@ -61,6 +77,10 @@ sudo cp deploy/mini-ruoyi.service /etc/systemd/system/
 
 unit 里已经设好 `GOMEMLIMIT=700MiB` / `GOGC=50` / `GOMAXPROCS=1`——
 **不要删**，否则 GC 会一路吃到机器上限被 OOM Killer 干掉，症状是「进程莫名重启」。
+
+这台测试服务器上的实际内存占用：
+
+![服务器内存占用](docs/imgs/服务器-内存信息.jpg)
 
 完整的部署、备份、升级、排查见 [docs/deployment.md](docs/deployment.md)。
 
@@ -136,6 +156,10 @@ log:
 监听 :8080（prod）| 数据库 /opt/mr/data.db | 前端 /opt/mr/web | 上传 /opt/mr/uploads
 （单文件 20 MiB / 共 512 MiB）| 日志保留 30 天 | 可信代理 127.0.0.1
 ```
+
+这台测试服务器上的配置信息：
+
+![服务器上的配置信息](docs/imgs/服务器-配置信息.jpg)
 
 ### 环境变量
 

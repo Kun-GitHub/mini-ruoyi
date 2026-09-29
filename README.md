@@ -19,6 +19,14 @@ deployment needs no nginx, the runtime needs no Node, and there is no separate d
 - **Fail-closed permissions**: a business endpoint cannot be registered without declaring a permission code (otherwise startup panics),
   an unauthenticated request is always 401 and a missing permission always 403, and the set of public endpoints is pinned by a test
 
+## Screenshots
+
+|  |  |
+| --- | --- |
+| ![Login page](docs/imgs/登录页.jpg) | ![User management](docs/imgs/用户管理.jpg) |
+| ![Role authorization](docs/imgs/角色授权.jpg) | ![Menu management](docs/imgs/菜单管理.jpg) |
+| ![File management](docs/imgs/文件管理.jpg) | ![System monitor](docs/imgs/服务监控.jpg) |
+
 ## Quick start
 
 Requires Go 1.25+ and Node.js 20+ (Node is only used to build the frontend).
@@ -54,6 +62,15 @@ make dev-web               # terminal 2: Vite dev server on :5173, proxying /api
 └── data.db             # SQLite database; created on first start, or use the bundled initial database
 ```
 
+This is what it actually looks like on a server — the binary, the frontend directory, the database and the upload
+directory all sit in one folder:
+
+![File layout on the server](docs/imgs/服务器-文件放置目录.jpg)
+
+The frontend directory is just an `index.html` plus content-hashed `assets/`:
+
+![Frontend files on the server](docs/imgs/服务器-前端文件.jpg)
+
 Both the systemd unit and the nginx config live in this repository and can be used as-is:
 
 ```bash
@@ -63,6 +80,10 @@ sudo cp deploy/mini-ruoyi.service /etc/systemd/system/
 The unit already sets `GOMEMLIMIT=700MiB` / `GOGC=50` / `GOMAXPROCS=1` —
 **do not remove them**, or the GC will climb until it hits the machine's limit and the OOM killer takes the process down,
 which shows up as "the process randomly restarts".
+
+Actual memory usage on a test server:
+
+![Memory usage on the server](docs/imgs/服务器-内存信息.jpg)
 
 Full deployment, backup, upgrade and troubleshooting instructions are in [docs/deployment.en.md](docs/deployment.en.md).
 
@@ -141,6 +162,10 @@ and "where do uploads go" are visible at a glance):
 监听 :8080（prod）| 数据库 /opt/mr/data.db | 前端 /opt/mr/web | 上传 /opt/mr/uploads
 （单文件 20 MiB / 共 512 MiB）| 日志保留 30 天 | 可信代理 127.0.0.1
 ```
+
+Configuration on a test server:
+
+![Configuration on the server](docs/imgs/服务器-配置信息.jpg)
 
 ### Environment variables
 

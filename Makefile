@@ -20,8 +20,7 @@ web: ## 构建前端到 web/dist
 
 # 二进制与 web/ 同级，后端据此自动定位前端目录（见 internal/config.defaultWebDir）
 build: web ## 构建二进制到 bin/，并把前端产物放到 bin/web/
-	rm -rf bin
-	mkdir -p bin
+	rm -rf bikdir -p bin
 	cp -R web/dist bin/web
 	go build -C server -o ../$(BIN) ./cmd/server
 

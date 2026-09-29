@@ -27,11 +27,24 @@ for the full list of settings, see [../server/README.en.md](../server/README.en.
 sudo useradd --system --home /opt/mini-ruoyi --shell /usr/sbin/nologin mini-ruoyi
 sudo cp bin/mini-ruoyi /opt/mini-ruoyi/
 sudo cp -r bin/web      /opt/mini-ruoyi/
+sudo chmod +x /opt/mini-ruoyi/mini-ruoyi   # a binary cross-built on Windows is 0644; without this systemd fails with 203/EXEC
 sudo chown -R mini-ruoyi:mini-ruoyi /opt/mini-ruoyi
 sudo cp deploy/mini-ruoyi.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now mini-ruoyi
 ```
+
+Before wiring up systemd, run it in the foreground from the deployment directory (handy for the first bring-up):
+
+```bash
+cd /opt/mini-ruoyi && ./mini-ruoyi          # :8080 by default, Ctrl-C to stop
+APP_ADDR=127.0.0.1:8080 ./mini-ruoyi        # environment overrides config (precedence: defaults → config.yaml → environment)
+```
+
+The first start creates `data.db` and applies every migration; the `监听 :8080（prod）| 数据库 … | 前端 …`
+log line confirms that the listen address, the database and the frontend directory all point where you expect.
+The working directory must be `/opt/mini-ruoyi`, otherwise the default config path `config/config.yaml` and
+`data.db` land somewhere else (use `APP_CONFIG` and `APP_DB_PATH` to point at them explicitly).
 
 Three things the unit already sets, and **must not be removed**:
 

@@ -27,11 +27,23 @@
 sudo useradd --system --home /opt/mini-ruoyi --shell /usr/sbin/nologin mini-ruoyi
 sudo cp bin/mini-ruoyi /opt/mini-ruoyi/
 sudo cp -r bin/web      /opt/mini-ruoyi/
+sudo chmod +x /opt/mini-ruoyi/mini-ruoyi   # 在 Windows 上交叉编译出来的二进制只有 0644，不补这一刀 systemd 会以 203/EXEC 失败
 sudo chown -R mini-ruoyi:mini-ruoyi /opt/mini-ruoyi
 sudo cp deploy/mini-ruoyi.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now mini-ruoyi
 ```
+
+还没上 systemd 时，直接在部署目录里前台跑一遍（第一次上线排查用）：
+
+```bash
+cd /opt/mini-ruoyi && ./mini-ruoyi          # 默认 :8080，Ctrl-C 停止
+APP_ADDR=127.0.0.1:8080 ./mini-ruoyi        # 环境变量覆盖配置（优先级：默认值 → config.yaml → 环境变量）
+```
+
+首次启动会建 `data.db` 并跑完所有迁移；日志里 `监听 :8080（prod）| 数据库 … | 前端 …` 那行确认
+监听地址、数据库、前端目录都指着预期位置。工作目录必须是 `/opt/mini-ruoyi`，否则默认配置路径
+`config/config.yaml` 和 `data.db` 会落到别处（用 `APP_CONFIG` 与 `APP_DB_PATH` 也可显式指定）。
 
 unit 里已经设好的三件事，**不要删**：
 
