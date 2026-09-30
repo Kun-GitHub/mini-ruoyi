@@ -355,7 +355,7 @@ cd server && go test ./...        # everything
 go test ./... -run TestNewDB      # one test
 ```
 
-There are 126 cases across 17 test files today. `handler` / `job` / `auth` / `domain` / `cmd/server` have no test files of
+There are 127 cases across 18 test files today. `handler` / `job` / `auth` / `domain` / `cmd/server` have no test files of
 their own — their correctness is covered by the end-to-end cases in `httpserver` (essentially every branch of a handler
 maps to one HTTP assertion).
 
@@ -363,6 +363,7 @@ maps to one HTTP assertion).
 | --- | --- |
 | `repository/sqlite_test.go` | **the PRAGMAs take effect on every connection** (guarding against the regression above), WAL is enabled |
 | `repository/migrate_test.go` | migration idempotence; upgrading a legacy database (tables but no migration records) without losing data; **the seeded password hash passes a bcrypt check**; **schema verification detects "the record says applied but the table is gone"** |
+| `repository/menu_seed_test.go` | **the menu seed matches the frontend**: every menu's `component` has a page, its `title_key` exists in both dictionaries, no duplicated paths — and in reverse, no page is unreachable from the menu |
 | `repository/filter_test.go` | LIKE wildcard escaping (`%` / `_` / `\`), user input never treated as a wildcard, filters really matching the expected rows |
 | `service/rbac_test.go` (including identity resolution in `authz_service`) | delete impact (including grants on descendant menus), cascade delete, cycle-reference rejection, four delete guards, administrator identity resolution, pagination edges |
 | `perm/perm_test.go` | group coverage and uniqueness, key-naming convention, detection of unknown permission codes, frontend dictionary coverage |
@@ -380,13 +381,13 @@ maps to one HTTP assertion).
 | `httpserver/fixture_test.go` | not a test case but the fixture the other tests reuse (a temporary database plus the full router) |
 | `TestPanicReturnsEnvelope` in `httpserver/router_test.go` | **a panic still returns the envelope** — a 500 with an empty body makes the frontend mistake "the backend errored" for "the backend is not up" |
 
-### ⚠️ Two cross-language cases need `-count=1`
+### ⚠️ Three cross-language cases need `-count=1`
 
-One case each in `perm/perm_test.go` and `httpx/response_test.go` reads the frontend i18n dictionaries
-(`web/src/lib/i18n/*.ts`) to confirm that "the keys the backend emits" and "the text the frontend has" have not drifted
-apart.
+One case each in `perm/perm_test.go`, `httpx/response_test.go` and `repository/menu_seed_test.go` reads frontend source
+(the i18n dictionaries, and the page files under `web/src/pages/`) to confirm that "the keys the backend emits",
+"the page a menu seed points at" and "the files the frontend really has" have not drifted apart.
 
-**Go's test cache does not track files opened with `os.ReadFile` while a test runs**, and these two cases read outside
+**Go's test cache does not track files opened with `os.ReadFile` while a test runs**, and these three cases read outside
 their package directory. Without `-count=1`, editing a frontend dictionary and re-running `go test` returns the stale
 `ok` from the cache — measured:
 
@@ -406,17 +407,55 @@ of 500s.
 
 ## 10. Adding a resource, end to end
 
-Take a new `widget` as the example:
+This section is a "copy this" checklist. A plain resource touches **12 files** (8 backend, 3 frontend, 1 menu-seed
+migration) plus 3 test files, and every step has something to copy from. **The reference is `role`** — the most standard
+"single table + paged list + create/update/delete" module, with no uploads, passwords or trees to distract you.
 
-1. `domain/widget.go` — the entity plus JSON tags
-2. `repository/migrations/0013_init_widgets.sql` — the table DDL (the highest existing number is `0012`)
-3. `repository/widget_repository.go` — single-table CRUD, returning `domain.ErrNotFound` when absent
-4. `service/widget_service.go` — business rules, pagination normalization
-5. `handler/widget_handler.go` — bind + validate + call the service, handing errors to `httpx.FailBindError` / `FailFromError`
-6. `httpserver/router.go` — register the routes
-7. `main.go` — wire the dependencies
-8. Frontend: add the page under `web/src/pages/` and the copy in `zh-CN.ts` / `en-US.ts`
+| What to write | Copy from | Leave out |
+| --- | --- | --- |
+| Entity | `Role` in `domain/rbac.go` | new resources get their own `domain/<resource>.go` (only same-family entities share a file) |
+| Table DDL | `sys_roles` in `migrations/0002_init_rbac.sql` | — |
+| Repository | `repository/role_repository.go` | `Grants` / `ReplaceGrants` and the other grant-specific methods |
+| Service | `service/role_service.go` | `Grants` / `SetGrants` |
+| Handler | `handler/role_handler.go` | `Grants` / `SetGrants` (keep `cascadeRequested` — delete confirmation needs it) |
+| Frontend page | `web/src/pages/system/roles.svelte` | the whole authorization tab |
 
-**The key point**: validation rules go on the request struct's `binding` tag (`binding:"required,min=2,max=64"`), and a
-failure goes through `httpx.FailBindError`, which expands it into the field-level array automatically — no hand-written
-error handling.
+Taking a new `widget` as the example:
+
+1. **Entity** — `domain/widget.go`: fields plus JSON tags (the field names are the public contract, see §5.2)
+2. **Table DDL** — `repository/migrations/0013_init_widgets.sql`: the highest existing number is `0012`, and migrations only ever append
+3. **Repository** — `repository/widget_repository.go`: `List` / `Count` / `GetByID` / `Create` / `Update` / `Delete`,
+   returning `domain.ErrNotFound` when absent, with an `ExistsXxx` pre-check for uniqueness
+4. **Service** — `service/widget_service.go`: pagination normalized into `Page[T]`, uniqueness conflicts returned as `domain.Duplicate("field")`,
+   and `Impact` computed before a delete (`domain.HasDependents` when something depends on it)
+5. **Handler** — `handler/widget_handler.go`: bind + validate + call the service, handing errors to `httpx.FailBindError` / `FailFromError`.
+   Validation rules live in the request struct's `binding` tag (`binding:"required,min=2,max=64"`), and
+   `FailBindError` expands it into the field-level array — no hand-written error handling
+6. **Permission codes** — `perm/perm.go`: declare `SystemWidgetList/Add/Edit/Delete` and add them to `Groups()`.
+   Every code must belong to exactly one group, or the permission screen never shows it
+7. **Routes** — `httpserver/router.go`: `reg.protect(http.MethodGet, "/widgets", perm.SystemWidgetList, deps.Widget.List)`.
+   **The permission code is a required argument** — leaving it out does not compile; and do not register a business
+   endpoint as public, because the public set is pinned by a test
+8. **Wiring** — `cmd/server/main.go`: `NewWidgetRepository` → `NewWidgetService` → `NewWidgetHandler`, then into `deps`
+9. **Copy** — `web/src/lib/i18n/zh-CN.ts` and `en-US.ts` each need three things: the permission-code text
+   (derived backend-side as `system:widget:add → perm.system.widget.add`), the page text, and the menu title key `menu.tool.widget`
+10. **Menu seed** — a new migration (copy `0009_seed_tool_menu.sql`): directories use `INSERT ... SELECT ... WHERE NOT EXISTS`
+    to stay idempotent, children look their parent up by `title_key`. **Skip this and the page cannot be reached from the UI at all**
+11. **Frontend page** — `web/src/pages/tool/widgets.svelte`: its `component` must match the seed from step 10
+    (path relative to `src/pages`, no extension)
+12. **Tests** — one each in `repository` (repository + seed), `service` (business rules, fixture `newJobFixture`) and
+    `httpserver` (end to end plus the three authorization layers, fixture `testDeps`)
+
+**Which omission gets caught by what**
+
+| Forgot | What stops you |
+| --- | --- |
+| No permission code declared, or a route registered without one | compile error / startup panic (fail-closed) |
+| Code not added to `Groups()` | `TestGroupsCoverAllCodesExactlyOnce` |
+| Frontend missing the `perm.*` text | `TestFrontendDictCoversPermKeys` |
+| Menu seed missing or misnamed | `TestMenuSeedResolvesToFrontend` (both directions: it also flags pages nobody can reach) |
+| Table DDL out of sync with the migration records | schema verification at startup (`verifySchema`) |
+| Resource not wired into `deps` | `TestRouterRejectsIncompleteDeps` |
+
+Finish with `make check` (gofmt + vet + cross-compilation + all backend tests + frontend type check), then run
+`make test-e2e` to actually click through the page.

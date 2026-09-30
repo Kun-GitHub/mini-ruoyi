@@ -290,7 +290,7 @@ internal/httpserver/               路由装配、静态资源托管 + SPA 兜�
 （`Filter` 家族），不得写 SQL、不得做业务判断。详见
 [../docs/architecture-server.md](../docs/architecture-server.md)。
 
-新增一个资源的完整步骤（8 步）也写在那份文档里。
+新增一个资源的完整步骤（12 步）也写在那份文档里。
 
 ## 尚未实现
 

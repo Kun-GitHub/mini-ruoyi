@@ -24,6 +24,7 @@ In one line: **read RuoYi-Go for DDD layering, use SaaS-Zero for a multi-tenant 
 when the box is a 1-core 1 GB VPS.**
 
 
+## Features
 
 - **One binary + one frontend directory**: `bin/mini-ruoyi` and `bin/web/`. `scp` them up and start; a single systemd unit is all it takes
 - **The frontend updates on its own**: the build output is not embedded in the binary, so rebuilding needs no backend restart — a browser refresh picks up the new version

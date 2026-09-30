@@ -349,7 +349,7 @@ cd server && go test ./...        # 全部
 go test ./... -run TestNewDB      # 单个
 ```
 
-当前 126 个用例，分布在 17 个测试文件里。`handler` / `job` / `auth` / `domain` / `cmd/server`
+当前 127 个用例，分布在 18 个测试文件里。`handler` / `job` / `auth` / `domain` / `cmd/server`
 没有独立测试文件——它们的正确性由 `httpserver` 的端到端用例覆盖（handler 的每个分支
 基本都对应一条 HTTP 断言）。
 
@@ -357,6 +357,7 @@ go test ./... -run TestNewDB      # 单个
 | --- | --- |
 | `repository/sqlite_test.go` | **每条连接的 PRAGMA 都生效**（防 A1 回归）、WAL 已启用 |
 | `repository/migrate_test.go` | 迁移幂等；在旧版遗留库（有表无迁移记录）上升级不丢数据；**种子密码哈希能通过 bcrypt 校验**；**结构校验能发现「记录说已应用、表却不在」** |
+| `repository/menu_seed_test.go` | **菜单种子与前端对得上**：每条菜单的 `component` 有对应页面、`title_key` 在双语字典里都存在、`path` 不重复；**反向也查**——页面文件不能有谁都点不进去的 |
 | `repository/filter_test.go` | LIKE 通配符转义（`%` / `_` / `\`）、用户输入不被当成通配符、筛选真的命中预期行 |
 | `service/rbac_test.go`（含 `authz_service` 的身份解析） | 删除影响面（含后代菜单的授权）、级联删除、环引用拦截、四条删除守卫、管理员身份解析、分页边界 |
 | `perm/perm_test.go` | 分组覆盖与去重、键名推导约定、未知权限码检出、前端字典覆盖 |
@@ -374,13 +375,14 @@ go test ./... -run TestNewDB      # 单个
 | `httpserver/fixture_test.go` | 不是用例，是被各测试复用的夹具（临时库 + 完整路由） |
 | `httpserver/router_test.go` 的 `TestPanicReturnsEnvelope` | **panic 也要返回信封**——空 body 的 500 会让前端把「后端出错」误判成「后端没起来」 |
 
-### ⚠️ 两个跨语言用例必须用 `-count=1`
+### ⚠️ 三个跨语言用例必须用 `-count=1`
 
-`perm/perm_test.go` 与 `httpx/response_test.go` 里各有一个用例会去读前端的
-i18n 字典（`web/src/lib/i18n/*.ts`），以确认「后端出的键」与「前端的文案」没跑偏。
+`perm/perm_test.go`、`httpx/response_test.go` 与 `repository/menu_seed_test.go` 里各有一个用例会去读前端源码
+（i18n 字典，以及 `web/src/pages/` 下的页面文件），以确认「后端出的键」「菜单种子指向的页面」
+与「前端真实存在的文件」没跑偏。
 
-**Go 的测试缓存不会追踪测试运行期 `os.ReadFile` 打开的文件**，而这两个用例的输入恰好
-在包目录之外。不加 `-count=1` 时，改了前端字典再跑 `go test` 会拿到缓存里那个已经
+**Go 的测试缓存不会追踪测试运行期 `os.ReadFile` 打开的文件**，而这三个用例的输入恰好
+都在包目录之外。不加 `-count=1` 时，改了前端字典再跑 `go test` 会拿到缓存里那个已经
 过期的 `ok`——实测确认过：
 
 ```
@@ -398,16 +400,53 @@ CI 是冷缓存所以不受影响；本地请用 `make test` 或 `make check`。
 
 ## 10. 新增一个资源的完整步骤
 
+这一节是「照抄即可」的清单。一个普通资源要动 **12 个文件**（后端 8 + 前端 3 + 菜单种子迁移 1），
+外加 3 个测试文件；每一步都有参照物，**金标准是 `role`（角色）**——最标准的「单表 + 分页列表 + 增删改」，
+没有上传、密码、树形这些特例。
+
+| 要写的东西 | 照抄 | 不要抄 |
+| --- | --- | --- |
+| 实体 | `domain/rbac.go` 的 `Role` | 新资源单独一个 `domain/<资源>.go`（只有同族实体才并进已有文件） |
+| 建表 | `migrations/0002_init_rbac.sql` 的 `sys_roles` | — |
+| 仓储 | `repository/role_repository.go` | `Grants` / `ReplaceGrants` 等授权专用方法 |
+| 服务 | `service/role_service.go` | `Grants` / `SetGrants` |
+| 处理器 | `handler/role_handler.go` | `Grants` / `SetGrants`（`cascadeRequested` 留着，删除确认要用） |
+| 前端页面 | `web/src/pages/system/roles.svelte` | 授权那个 tab 整段 |
+
 以新增 `widget` 为例：
 
-1. `domain/widget.go` — 实体 + JSON tag
-2. `repository/migrations/0013_init_widgets.sql` — 建表 DDL（现有编号最大到 `0012`）
-3. `repository/widget_repository.go` — 单表 CRUD，判空返回 `domain.ErrNotFound`
-4. `service/widget_service.go` — 业务规则、分页归一化
-5. `handler/widget_handler.go` — 绑定 + 校验 + 调 service，错误交给 `httpx.FailBindError` / `FailFromError`
-6. `httpserver/router.go` — 注册路由
-7. `main.go` — 组装依赖
-8. 前端：`web/src/pages/` 加页面、`zh-CN.ts` / `en-US.ts` 加文案
+1. **实体** — `domain/widget.go`：字段 + JSON tag（字段名就是对外的契约，见 §5.2）
+2. **建表** — `repository/migrations/0013_init_widgets.sql`：现有最大编号是 `0012`，迁移只能往后加
+3. **仓储** — `repository/widget_repository.go`：`List` / `Count` / `GetByID` / `Create` / `Update` / `Delete`，
+   判空返回 `domain.ErrNotFound`，唯一性用 `ExistsXxx` 预检
+4. **服务** — `service/widget_service.go`：分页归一化成 `Page[T]`、唯一冲突返回 `domain.Duplicate("字段名")`、
+   删除前用 `Impact` 算影响面（有依赖就 `domain.HasDependents`）
+5. **处理器** — `handler/widget_handler.go`：绑定 + 校验 + 调 service，错误交给 `httpx.FailBindError` / `FailFromError`。
+   校验规则写在请求结构体的 `binding` tag 上（`binding:"required,min=2,max=64"`），
+   `FailBindError` 会把它展开成字段级数组，不用手写错误处理
+6. **权限码** — `perm/perm.go`：声明 `SystemWidgetList/Add/Edit/Delete` 并加进 `Groups()`。
+   每个码必须恰好属于一个分组，否则权限界面看不到它
+7. **路由** — `httpserver/router.go`：`reg.protect(http.MethodGet, "/widgets", perm.SystemWidgetList, deps.Widget.List)`。
+   **权限码是必填参数**，漏了编译不过；也不要把业务端点注册成公开端点——公开集合被测试钉死
+8. **依赖组装** — `cmd/server/main.go`：`NewWidgetRepository` → `NewWidgetService` → `NewWidgetHandler`，再塞进 `deps`
+9. **文案** — `web/src/lib/i18n/zh-CN.ts` + `en-US.ts` 各加三样：权限码文案
+   （Go 按 `system:widget:add → perm.system.widget.add` 推导）、页面文案、菜单标题键 `menu.tool.widget`
+10. **菜单种子** — 新加一条迁移（照抄 `0009_seed_tool_menu.sql`）：目录用 `INSERT ... SELECT ... WHERE NOT EXISTS` 保证幂等，
+    子菜单靠 `title_key` 反查 `parent_id`。**漏了这步，页面在界面上根本点不进去**
+11. **前端页面** — `web/src/pages/tool/widgets.svelte`：`component` 必须与第 10 步的种子一致（相对 `src/pages`、不带扩展名）
+12. **测试** — `repository`（仓储 + 种子）、`service`（业务规则，样板 `newJobFixture`）、
+    `httpserver`（端到端与三层授权，样板 `testDeps`）各加一个
 
-**要点**：校验规则写在请求结构体的 `binding` tag 上（`binding:"required,min=2,max=64"`）；
-失败时用 `httpx.FailBindError`，它会自动展开成字段级数组，不用手写错误处理。
+**漏了哪一步，谁拦住你**
+
+| 漏了 | 拦住它的东西 |
+| --- | --- |
+| 权限码没声明，或路由没传 | 编译不过 / 启动 panic（fail-closed） |
+| 权限码没进 `Groups()` | `TestGroupsCoverAllCodesExactlyOnce` |
+| 前端缺 `perm.*` 文案 | `TestFrontendDictCoversPermKeys` |
+| 菜单种子漏了或名字写歪 | `TestMenuSeedResolvesToFrontend`（双向：也查有没有页面谁都点不进去） |
+| 建表 SQL 与迁移记录对不上 | 启动时的结构校验 `verifySchema` |
+| 资源没装配进 `deps` | `TestRouterRejectsIncompleteDeps` |
+
+最后跑 `make check`（gofmt + vet + 交叉编译 + 全部后端测试 + 前端类型检查），
+再 `make test-e2e` 真的点一遍页面。

@@ -300,7 +300,7 @@ The dependency direction is strictly one-way: `handler` is allowed to import `re
 filters (the `Filter` family); it must not write SQL and must not make business decisions. Details in
 [../docs/architecture-server.en.md](../docs/architecture-server.en.md).
 
-The complete 8-step recipe for adding a resource is in that same document.
+The complete 12-step recipe for adding a resource is in that same document.
 
 ## Not implemented yet
 

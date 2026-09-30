@@ -102,7 +102,7 @@ func TestSeedRbac(t *testing.T) {
 		t.Errorf("admin 未绑定 admin 角色（%d 条关联）", linkCount)
 	}
 
-	// 菜单树：两个根目录（系统管理 / 系统监控），各自带子菜单
+	// 菜单树：三个根目录（系统管理 / 系统监控 / 系统工具），各自带子菜单
 	var rootCount int
 	if err := db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM sys_menus WHERE menu_type = 'directory' AND parent_id IS NULL`).Scan(&rootCount); err != nil {
