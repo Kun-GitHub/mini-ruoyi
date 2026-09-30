@@ -162,13 +162,12 @@ Users get the new version on refresh (`index.html` is `no-cache` and `assets/*` 
 
 > Exception: if a user **has the page open right now** and you delete the old hashed file it references between two
 > refreshes, that page's lazy import 404s. The frontend listens for `vite:preloadError` and reloads the whole page
-> Exception: if a user **has the page open right now** and you delete the old hashed file it references between two
-> refreshes, that page's lazy import 404s. The frontend listens for `vite:preloadError` and reloads the whole page
 > automatically, so it shows up as "I clicked something and the page refreshed itself" rather than a blank screen.
 
 > ⚠️ **Frontend-only updates only work while the envelope contract is unchanged.** After a change to the response
 > envelope (the value of `code`), an old frontend rejects every response from the new backend — every request reports
-> **"Cannot reach the backend service"**, login included.
+> **"Cannot reach the backend service"**, login included. Parsing never succeeds either: the old frontend waits for
+> `code === 0`, while the new backend sends status codes.
 >
 > You must **update the frontend and get the browser to refresh at the same time**: `index.html` is `no-cache`, so one
 > manual refresh is enough. If `index.html` itself is cached (a CDN in front, say), purge it. When upgrading the backend

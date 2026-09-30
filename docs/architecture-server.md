@@ -52,12 +52,15 @@ server/
 
 ```
 domain      →（不依赖任何内部包）
+config      →（不依赖任何内部包）
+system      →（不依赖任何内部包）
+job         →（不依赖任何内部包）
 httpx       → domain
 perm        →（不依赖任何内部包）
 auth        → domain, repository
 repository  → domain
-service     → auth, domain, perm, repository
-handler     → domain, httpx, middleware, perm, repository, service
+service     → auth, domain, job, perm, repository, system
+handler     → auth, domain, httpx, middleware, perm, repository, service
 middleware  → auth, domain, httpx, perm, service
 httpserver  → handler, httpx, middleware, perm
 ```
@@ -65,6 +68,9 @@ httpserver  → handler, httpx, middleware, perm
 | 层 | 职责 | 禁止 |
 | --- | --- | --- |
 | `domain` | 实体定义、领域错误哨兵（`ErrNotFound` / `ErrHasDependents` / `ErrDuplicate` 等） | 依赖任何其他内部包 |
+| `config` | 配置装配（环境变量 > 文件 > 默认值），只被 `cmd/server` 使用 | 依赖任何其他内部包 |
+| `system` | 采集 CPU / 内存 / 磁盘 / 进程；逐项带 `available` 标记，读不到就说读不到 | 依赖 service / handler |
+| `job` | 定时任务注册表（任务真源在代码，库里只存开关与 cron）；依赖用接口声明在使用方 | 依赖 service / auth（会成环） |
 | `perm` | 权限码常量与分组，不查库 | 依赖任何其他内部包 |
 | `auth` | 密码哈希/校验、会话签发与解析 | 依赖 handler / service |
 | `httpx` | 响应信封、错误键、错误→状态码映射 | 依赖 handler / service / repository |

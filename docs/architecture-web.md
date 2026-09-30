@@ -483,7 +483,7 @@ npm run build       # 生产构建
 | 层 | 命令 | 覆盖 |
 | --- | --- | --- |
 | 类型与模板 | `npm run check` | svelte-check + tsc |
-| 接口契约 | `make test` | 后端 126 个用例（CGO 无关的正确性都在这层） |
+| 接口契约 | `make test` | 后端 127 个用例（CGO 无关的正确性都在这层） |
 | 真实交互 | `make test-e2e` | Playwright + Chromium，11 个 spec / 78 个用例 |
 
 E2E 走 `webServer` 自动起一个**用临时库的后端**，每次运行前清库——

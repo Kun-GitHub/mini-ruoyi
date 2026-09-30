@@ -52,12 +52,15 @@ Dependencies are strictly one-way, with no cycles:
 
 ```
 domain      → (depends on no internal package)
+config      → (depends on no internal package)
+system      → (depends on no internal package)
+job         → (depends on no internal package)
 httpx       → domain
 perm        → (depends on no internal package)
 auth        → domain, repository
 repository  → domain
-service     → auth, domain, perm, repository
-handler     → domain, httpx, middleware, perm, repository, service
+service     → auth, domain, job, perm, repository, system
+handler     → auth, domain, httpx, middleware, perm, repository, service
 middleware  → auth, domain, httpx, perm, service
 httpserver  → handler, httpx, middleware, perm
 ```
@@ -65,6 +68,9 @@ httpserver  → handler, httpx, middleware, perm
 | Layer | Responsibility | Forbidden |
 | --- | --- | --- |
 | `domain` | Entity definitions, domain error sentinels (`ErrNotFound` / `ErrHasDependents` / `ErrDuplicate` and friends) | Depends on any other internal package |
+| `config` | Config assembly (environment > file > defaults), used only by `cmd/server` | Depends on any other internal package |
+| `system` | Collecting CPU / memory / disk / process metrics, each with an `available` flag — unavailable rather than a fake zero | Depends on service / handler |
+| `job` | The scheduled-job registry (the source of truth is code; the database stores only the enabled flag and cron); dependencies are declared as interfaces on the consumer side | Depends on service / auth (that would be a cycle) |
 | `perm` | Permission code constants and grouping, no database access | Depends on any other internal package |
 | `auth` | Password hashing/verification, session issuing and parsing | Depends on handler / service |
 | `httpx` | The response envelope, error keys, error → status mapping | Depends on handler / service / repository |

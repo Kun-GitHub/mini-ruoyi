@@ -464,7 +464,7 @@ error.backendUnreachable    # 有响应但不是信封：请求被代理拦下�
 | 项 | 说明 |
 | --- | --- |
 | 初始数据库可复现 | 目前 `server/data.db` 随仓库分发。它同时是开发时的活数据库，登录一次就会写入会话与日志，所以提交前要跑 `make db-clean`。最终应改为从 `migrations/` + 种子 SQL 重新生成，不再随仓库分发 |
-| 字体体积 | Inter 可变字体包含全部子集，`dist` 里 woff2 共 218 KB。若只面向中英文可裁剪为 latin + latin-ext |
+| 字体体积 | Inter 可变字体包含全部子集，`dist` 里 woff2 共 213 KB。若只面向中英文可裁剪为 latin + latin-ext |
 
 前端侧的待办见 [architecture-web.md](architecture-web.md) §9，后端侧见
 [../server/README.md](../server/README.md)「尚未实现」，表结构侧见 [schema.md](schema.md) §11。

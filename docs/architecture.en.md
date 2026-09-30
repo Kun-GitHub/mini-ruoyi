@@ -479,7 +479,7 @@ remains.
 | Item | Notes |
 | --- | --- |
 | A reproducible initial database | `server/data.db` currently ships in the repository. It doubles as the live development database, so a single login writes sessions and logs into it — run `make db-clean` before committing. The end state is to regenerate it from `migrations/` + seed SQL and stop shipping a database at all |
-| Font size | The Inter variable font carries every subset, for 218 KB of woff2 in `dist`. Restricted to Chinese and English it could be trimmed to latin + latin-ext |
+| Font size | The Inter variable font carries every subset, for 213 KB of woff2 in `dist`. Restricted to Chinese and English it could be trimmed to latin + latin-ext |
 
 Frontend-side to-dos are in [architecture-web.en.md](architecture-web.en.md) §9, backend-side ones under "Not implemented
 yet" in [../server/README.en.md](../server/README.en.md), and schema-side ones in

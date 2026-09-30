@@ -499,7 +499,7 @@ Three layers, each with its own job:
 | Layer | Command | Coverage |
 | --- | --- | --- |
 | Types and templates | `npm run check` | svelte-check + tsc |
-| Interface contract | `make test` | the backend's 126 cases (all correctness unrelated to CGO lives here) |
+| Interface contract | `make test` | the backend's 127 cases (all correctness unrelated to CGO lives here) |
 | Real interaction | `make test-e2e` | Playwright + Chromium, 11 specs / 78 cases |
 
 E2E goes through `webServer`, which automatically starts **a backend on a temporary database**, clearing it before every
