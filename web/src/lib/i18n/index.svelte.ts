@@ -25,12 +25,17 @@ function initialLocale(): Locale {
 
 // 用 $state 而非普通变量：t() 在模板里读 locale，语言切换才能自动重渲染。
 // 模块级 $state 不能直接 export 可变绑定，所以对外只暴露 getter/setter。
-let current = $state<Locale>(initialLocale())
+const initial = initialLocale()
+let current = $state<Locale>(initial)
 
 function applyDocumentLang(locale: Locale) {
   document.documentElement.lang = locale
 }
-applyDocumentLang(current)
+
+// 传 initial 而不是 current：在模块顶层读 $state 会被编译器警告「这里只捕获了初始值」
+// （svelte/state_referenced_locally）。本意确实就是「加载时应用一次初始值」，
+// 之后的变更由 setLocale 自己负责——写成 initial 把这个意图摆明，警告也就没了。
+applyDocumentLang(initial)
 
 export function getLocale(): Locale {
   return current
