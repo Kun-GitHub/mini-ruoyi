@@ -72,6 +72,57 @@ test.describe('在线会话', () => {
 
     await other.close()
   })
+
+  test('用户列表上可以一次强退该用户的全部会话', async ({ page, browser }) => {
+    const name = unique('kickall')
+    await loginAsAdmin(page)
+    await openPage(page, '用户管理')
+
+    await page.getByRole('button', { name: '新增' }).click()
+    await dialog(page).getByLabel('用户名').fill(name)
+    await dialog(page).getByLabel('密码').fill('kick-password')
+    await dialog(page).getByRole('button', { name: '保存' }).click()
+    await expect(dialog(page)).toBeHidden()
+
+    // 同一账号在两个上下文里各登录一次 → 两条会话。
+    // 这正是「只能在会话列表里一条条踢」不够用的场景：
+    // 账号被盗时要的是把这个人的所有会话一起踢掉。
+    const one = await browser.newContext({ locale: 'zh-CN' })
+    const two = await browser.newContext({ locale: 'zh-CN' })
+    for (const ctx of [one, two]) {
+      const p = await ctx.newPage()
+      await p.goto('/login')
+      await p.getByLabel('用户名').fill(name)
+      await p.getByLabel('密码').fill('kick-password')
+      await p.getByRole('button', { name: '登录', exact: true }).click()
+      await expect(p.getByRole('button', { name: '退出登录' })).toBeVisible()
+    }
+
+    // 自己那一行的按钮是置灰的：后端会报 cannotKickSelf
+    const selfRow = page.getByRole('row').filter({ hasText: 'admin' }).first()
+    await expect(selfRow.getByRole('button', { name: '强制下线' })).toBeDisabled()
+
+    const row = page.getByRole('row').filter({ hasText: name }).first()
+    await row.getByRole('button', { name: '强制下线' }).click()
+
+    // 确认框的标题是「确认强制下线」而不是通用的「确认删除」——
+    // 这里什么都没删，标题写错会让人以为删了东西
+    await expect(dialog(page).getByText('确认强制下线')).toBeVisible()
+    await dialog(page).getByRole('button', { name: '确定' }).click()
+    await expectToast(page, '已强制下线')
+
+    // 两条会话都应当失效，而不是只死一条
+    for (const ctx of [one, two]) {
+      const p = ctx.pages()[0]
+      await p.reload()
+      await expect(p.getByRole('button', { name: '登录', exact: true })).toBeVisible()
+      await ctx.close()
+    }
+
+    // 发起者自己不受影响
+    await page.reload()
+    await expect(page.getByRole('button', { name: '退出登录' })).toBeVisible()
+  })
 })
 
 test.describe('登录日志', () => {
@@ -115,6 +166,45 @@ test.describe('登录日志', () => {
     // 筛「失败」时不该出现成功记录
     await expect(page.getByRole('row').filter({ hasText: '成功' })).toHaveCount(0)
   })
+
+  test('时间范围筛选：选今天能查到，选明天查不到', async ({ page }) => {
+    // 先在登录页造一条记录，再进后台
+    await page.goto('/login')
+    await page.getByLabel('用户名').fill('admin')
+    await page.getByLabel('密码').fill('definitely-wrong')
+    await page.getByRole('button', { name: '登录', exact: true }).click()
+    await expect(page.getByText('用户名或密码错误')).toBeVisible()
+    await loginAsAdmin(page)
+    await openPage(page, '登录日志')
+
+    const iso = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    const today = iso(new Date())
+    const tomorrow = iso(new Date(Date.now() + 24 * 3600 * 1000))
+
+    // 时间范围是筛选栏里最后两个输入框
+    const dates = page.getByTestId('filters').getByRole('textbox')
+    const query = () => page.getByRole('button', { name: '查询' }).click()
+
+    // ① 「今天到明天」必须命中。
+    // 用 expectLogRow 而不是裸的 toBeVisible：日志批量落库、最多 2 秒延迟，
+    // 而 toBeVisible 的自动重试只重新求值 DOM，不会重新发请求——
+    // 实测两条登录与查询全落在同一秒内，直接断言会稳定失败。
+    await dates.nth(1).fill(today)
+    await dates.nth(2).fill(tomorrow)
+    await query()
+    await expectLogRow(page, page.getByRole('row').filter({ hasText: 'admin' }))
+
+    // ② 确认有数据之后再断言为空，否则「为空」可能是假的——
+    // 日志还没落库时任何查询都是空的，那个绿灯什么也没证明。
+    //
+    // 这里才是 end 含当天的真正考验：start 落在将来时，
+    // end 若没 +1 天变成开区间上界，边界会往外溜一天。
+    await dates.nth(1).fill(tomorrow)
+    await dates.nth(2).fill(tomorrow)
+    await query()
+    await expect(page.getByText(/共 0 条/)).toBeVisible()
+  })
 })
 
 test.describe('操作日志', () => {
@@ -134,7 +224,13 @@ test.describe('操作日志', () => {
     await page.reload()
 
     await openPage(page, '操作日志')
-    const row = page.getByRole('row').filter({ hasText: '/api/v1/users' })
+
+    // 用路径单元格精确匹配，不能用 filter({ hasText: '/api/v1/users' })——
+    // hasText 是**子串**匹配，它会同时命中 '/api/v1/users/:id/sessions' 这类路径，
+    // 而日志按时间倒序，.first() 拿到的可能是那条，它里面没有 POST。
+    const row = page
+      .getByRole('row')
+      .filter({ has: page.getByRole('cell', { name: '/api/v1/users', exact: true }) })
     await expectLogRow(page, row)
     await expect(row.first().getByText('POST')).toBeVisible()
 

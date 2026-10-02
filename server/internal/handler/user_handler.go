@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -57,11 +59,16 @@ func (h *UserHandler) Create(c *gin.Context) {
 
 func (h *UserHandler) List(c *gin.Context) {
 	page, pageSize := pageParams(c)
+	roleID, err := optionalID(c, "role_id")
+	if err != nil {
+		return
+	}
 	result, err := h.svc.List(c.Request.Context(), repository.UserFilter{
 		Username: c.Query("username"),
 		Nickname: c.Query("nickname"),
 		Mobile:   c.Query("mobile"),
 		Status:   c.Query("status"),
+		RoleID:   roleID,
 	}, page, pageSize)
 	if err != nil {
 		httpx.FailFromError(c, err)
@@ -192,4 +199,62 @@ func pageParams(c *gin.Context) (int, int) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
 	return page, pageSize
+}
+
+// optionalID 解析一个可选的查询参数 ID。空串返回 0，表示不筛。
+//
+// 非法时报 400 而不是当作「不筛」——静默忽略的话筛选看起来生效了，
+// 实际拿到的是全部数据，用户会对着没筛过的结果找问题。
+// 失败时已经写好 400 响应，调用方直接 return 即可。
+func optionalID(c *gin.Context, name string) (int64, error) {
+	raw := c.Query(name)
+	if raw == "" {
+		return 0, nil
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id <= 0 {
+		httpx.Fail(c, http.StatusBadRequest, httpx.KeyInvalidID)
+		return 0, fmt.Errorf("非法的 %s=%q", name, raw)
+	}
+	return id, nil
+}
+
+// dateRange 解析日志筛选的 start / end 两个日期参数（YYYY-MM-DD）。
+//
+// 按**服务器本地时区**解释，与 cron 保持一致——「今天」是运维看到的那个今天。
+// 代价是服务器与浏览器不在同一时区时会有一天以内的偏移，界面上显示的也是本地时间，
+// 所以自托管场景下两者一致。
+//
+// 返回的 End 是**开区间上界**：界面上选的是「日期」而不是「时刻」，
+// 选 10-01 到 10-01 应当包含那一整天，所以这里 +1 天。
+//
+// 格式错时已经写好 400 响应，调用方直接 return 即可。静默忽略是不行的——
+// 用户会以为筛选生效了，对着一份没筛过的数据找问题。
+func dateRange(c *gin.Context) (time.Time, time.Time, error) {
+	start, err := parseDate(c.Query("start"))
+	if err != nil {
+		httpx.Fail(c, http.StatusBadRequest, httpx.KeyInvalidDate)
+		return time.Time{}, time.Time{}, err
+	}
+	end, err := parseDate(c.Query("end"))
+	if err != nil {
+		httpx.Fail(c, http.StatusBadRequest, httpx.KeyInvalidDate)
+		return time.Time{}, time.Time{}, err
+	}
+	if !end.IsZero() {
+		end = end.AddDate(0, 0, 1)
+	}
+	return start, end, nil
+}
+
+// parseDate 把 YYYY-MM-DD 解析成服务器本地时区的零点；空串返回零值。
+func parseDate(raw string) (time.Time, error) {
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	d, err := time.ParseInLocation("2006-01-02", raw, time.Local)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("解析日期 %q: %w", raw, err)
+	}
+	return d, nil
 }

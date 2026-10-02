@@ -28,6 +28,7 @@
   import { fieldErrorOf } from '$lib/i18n/errors'
   import { t } from '$lib/i18n/index.svelte'
   import { replaceQuery, route } from '$lib/router.svelte'
+  import { confirm } from '$lib/stores/confirm.svelte'
   import { notifyError, notifySuccess } from '$lib/stores/notify.svelte'
   import { session } from '$lib/stores/session.svelte'
 
@@ -49,6 +50,7 @@
     nickname: initial.get('nickname') ?? '',
     mobile: initial.get('mobile') ?? '',
     status: initial.get('status') ?? '',
+    role_id: initial.get('role_id') ?? '',
   })
 
   let total = $state(0)
@@ -57,6 +59,9 @@
 
   onMount(() => {
     void load()
+    // 筛选栏里的角色下拉也要数据。它和编辑弹窗共用 roleOptions，
+    // 弹窗打开时还会再拉一次（见 loadRoleOptions 的说明）。
+    void loadRoleOptions()
   })
 
   // 只在有 role:list 权限时才去拉角色列表——否则请求必然 403，
@@ -71,7 +76,7 @@
       const q = new URLSearchParams()
       q.set('page', String(page))
       q.set('page_size', String(PAGE_SIZE))
-      for (const key of ['username', 'nickname', 'mobile', 'status'] as const) {
+      for (const key of ['username', 'nickname', 'mobile', 'status', 'role_id'] as const) {
         if (filters[key]) q.set(key, filters[key])
       }
       const res = await api.get<Page<User>>(`/users?${q}`)
@@ -102,7 +107,7 @@
   }
 
   function resetFilters() {
-    filters = { username: '', nickname: '', mobile: '', status: '' }
+    filters = { username: '', nickname: '', mobile: '', status: '', role_id: '' }
     page = 1
     syncURL()
     void load()
@@ -287,6 +292,36 @@
     }
   }
 
+  // ---- 强制下线 ----
+
+  /**
+   * 踢掉该用户的**全部**会话。
+   *
+   * 后端的 `/users/:id/sessions` 早就存在（重置密码也走它），这里补的是入口：
+   * 账号被盗时要做的正是「把这个人的所有会话一起踢掉」，而在会话列表里只能一条条踢，
+   * 会话超过 20 条还得翻页找全。
+   */
+  async function kickAll(user: User) {
+    const ok = await confirm({
+      titleKey: 'confirm.kickTitle',
+      bodyKey: 'session.kickAllConfirm',
+      details: [{ labelKey: 'field.username', value: user.username }],
+      danger: true,
+    })
+    if (!ok) return
+
+    busyID = user.id
+    try {
+      await api.del(`/users/${user.id}/sessions`)
+      notifySuccess('notify.kicked')
+      await load()
+    } catch (err) {
+      notifyError(errKey(err))
+    } finally {
+      busyID = null
+    }
+  }
+
   let busyID = $state<number | null>(null)
   const totalPages = $derived(Math.max(1, Math.ceil(total / PAGE_SIZE)))
 </script>
@@ -316,6 +351,19 @@
           <option value="inactive">{t('common.status.inactive')}</option>
         </NativeSelect>
       </label>
+      <!-- 没 role:list 权限就拉不到角色列表，那这个下拉只能是空的；
+           与其摆一个永远没有选项的框，不如不显示 -->
+      {#if canPickRoles}
+        <label class="flex w-48 flex-col gap-1.5 text-sm">
+          <span class="text-muted-foreground">{t('user.roles')}</span>
+          <NativeSelect class="w-full" bind:value={filters.role_id}>
+            <option value="">{t('common.all')}</option>
+            {#each roleOptions as role (role.id)}
+              <option value={String(role.id)}>{role.name}</option>
+            {/each}
+          </NativeSelect>
+        </label>
+      {/if}
 
       <!-- 按钮跟在字段后面，一起换行：字段改成固定宽度后，
            再把按钮推到最右边会显得很散，而且中间空一大片 -->
@@ -383,6 +431,17 @@
                   }}
                 >
                   {t('user.resetPassword')}
+                </Button>
+              {/if}
+              {#if session.can('monitor:session:kick')}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  class="text-destructive"
+                  disabled={user.id === session.user?.id || busyID === user.id}
+                  onclick={() => kickAll(user)}
+                >
+                  {t('session.kickUser')}
                 </Button>
               {/if}
               {#if session.can('system:user:delete')}

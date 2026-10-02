@@ -132,6 +132,8 @@ export const zhCN = {
   'page.forbidden.body': '当前账号没有查看该页面的权限。',
 
   'confirm.deleteTitle': '确认删除',
+  // 强制下线不是删除，标题用「确认删除」会让人以为删了什么东西
+  'confirm.kickTitle': '确认强制下线',
   'confirm.deleteBody': '删除后无法恢复，确定继续吗？',
   'confirm.hasDependents': '该资源存在关联数据，删除会一并影响以下内容：',
   'confirm.cascade': '确认删除',
@@ -208,20 +210,25 @@ export const zhCN = {
   'session.kickUser': '强制下线',
   'session.current': '当前会话',
   'session.kickConfirm': '强制该用户下线？对方需要重新登录。',
+  'session.kickAllConfirm': '该用户的所有登录会话都会立即失效，对方需要重新登录。',
 
   'loginlog.title': '登录日志',
-  'loginlog.hint': '成功与失败都记录。只记成功的话，「有人在暴力破解」就看不出来。日志批量落库，最多有 2 秒延迟。',
+  'loginlog.hint': '成功与失败都记录。只记成功的话，「有人在暴力破解」就看不出来。日志批量落库，最多有 2 秒延迟。时间筛选按服务器本地时区，含起止当天。',
   'loginlog.status.success': '成功',
   'loginlog.status.failed': '失败',
   'loginlog.reason': '失败原因',
+  'loginlog.time': '时间范围',
+
 
   'operlog.title': '操作日志',
-  'operlog.hint': '只记录写操作（新增/修改/删除），以及被拒绝的请求。不记录请求体——登录、改密码的请求体里是明文密码。日志批量落库，最多有 2 秒延迟。',
+  'operlog.hint': '只记录写操作（新增/修改/删除），以及被拒绝的请求。不记录请求体——登录、改密码的请求体里是明文密码。日志批量落库，最多有 2 秒延迟。时间筛选按服务器本地时区，含起止当天。',
   'operlog.path': '接口',
   'operlog.duration': '耗时',
   'operlog.result': '结果',
   'operlog.success': '成功',
   'operlog.method': '方法',
+  'operlog.time': '时间范围',
+
 
   'perm.group.monitor.session': '在线会话',
   'perm.group.monitor.loginlog': '登录日志',
@@ -303,6 +310,7 @@ export const zhCN = {
   'profile.passwordMismatch': '两次输入的新密码不一致',
   'profile.passwordChanged': '密码已修改，其他设备上的登录已被登出',
   'profile.noPermissionHint': '这里改的是你自己的账号，不需要管理权限。',
+  'error.invalidDate': '日期格式不正确，应为 2026-09-30',
   'error.wrongOldPassword': '当前密码不正确',
 
   // ---- 服务监控 ----

@@ -30,7 +30,10 @@ const (
 	KeyInternal           = "error.internal"
 	KeyTooManyRequests    = "error.tooManyRequests"
 	KeyServiceUnavailable = "error.serviceUnavailable"
-	KeyInvalidID          = "error.invalidId"
+	// KeyInvalidID 路径参数 id 不是数字。
+	KeyInvalidID = "error.invalidId"
+	// KeyInvalidDate 日期筛选参数不是 YYYY-MM-DD。
+	KeyInvalidDate = "error.invalidDate"
 	// KeyHasDependents 用于删除有子数据的资源时返回 409，响应体带影响面，
 	// 前端据此弹确认框而不是报错。详见 docs/architecture.md §3.4。
 	KeyHasDependents    = "error.hasDependents"

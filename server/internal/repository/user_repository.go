@@ -27,12 +27,14 @@ func scanUser(s interface{ Scan(...any) error }) (domain.User, error) {
 	return u, err
 }
 
-// UserFilter 是用户列表的筛选条件。空字符串表示不限制。
+// UserFilter 是用户列表的筛选条件。空字符串（或 0）表示不限制。
 type UserFilter struct {
 	Username string // 模糊匹配
 	Nickname string // 模糊匹配
 	Mobile   string // 模糊匹配
 	Status   string // 精确匹配
+	// RoleID 按角色筛。0 表示不限制。
+	RoleID int64
 }
 
 func userWhere(f UserFilter) (string, []any) {
@@ -42,6 +44,15 @@ func userWhere(f UserFilter) (string, []any) {
 	b.like("nickname", f.Nickname)
 	b.like("mobile", f.Mobile)
 	b.eq("status", f.Status)
+
+	// 按角色筛用 EXISTS 而不是 JOIN：
+	//   * WHERE 是 whereBuilder 单独拼的，JOIN 得改 FROM 那一侧，List 与 Count 都要跟着改
+	//   * EXISTS 天然不会因为关联表命中多行而把结果行数翻倍——
+	//     换成 JOIN 的话，将来若改成「多重角色」筛选就会错得很难查
+	if f.RoleID > 0 {
+		b.raw(`EXISTS (SELECT 1 FROM sys_user_roles ur
+			WHERE ur.user_id = sys_users.id AND ur.role_id = ?)`, f.RoleID)
+	}
 	return b.clause(), b.args
 }
 

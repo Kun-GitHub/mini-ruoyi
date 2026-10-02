@@ -89,6 +89,7 @@ json.Marshal(Response{Msg: "ok", Data: x})   // 忘了设 Code
 | 参数校验失败 | 400 | `error.validationFailed` |
 | 请求体格式错误 | 400 | `error.malformedBody` |
 | 路径参数非法 | 400 | `error.invalidId` |
+| 日期筛选参数格式错 | 400 | `error.invalidDate` |
 | 上级节点不合法 | 400 | `error.invalidParent` |
 | 资源不存在 | 404 | `error.notFound` |
 | 未登录 / 会话失效 | 401 | `error.unauthorized` |
@@ -425,7 +426,7 @@ error.duplicate             error.invalidPermCode
 error.cannotKickSelf        error.frontendDisabled
 error.invalidJobCron        error.fileTooLarge
 error.quotaExceeded         error.invalidFile
-error.wrongOldPassword
+error.wrongOldPassword      error.invalidDate
 # 以下两个仅由前端产生（web/src/lib/api/client.ts），后端不会返回：
 error.network               # fetch 抛异常：没有任何东西应答
 error.backendUnreachable    # 有响应但不是信封：请求被代理拦下，或后端没启动
@@ -458,8 +459,14 @@ error.backendUnreachable    # 有响应但不是信封：请求被代理拦下�
 
 ## 8. 待办清单
 
-认证、鉴权、权限缓存、动态路由、审计日志都已经落地（本文 §5 与
+认证、鉴权、动态路由、审计日志都已经落地（本文 §5 与
 [architecture-server.md](architecture-server.md) 里有对应的实现说明），这里只列还没做的。
+
+> 顺带说明一处**没有**做的东西：鉴权**没有跨请求的权限缓存**。
+> `Auth.Require` 每个请求都调一次 `IdentityOf`（查 `sys_user_roles` + `sys_role_perms`），
+> `RequirePerm` 复用同一请求里已经解析好的那份。这是有意的——见 §5 里否决 JWT 的理由：
+> 缓存权限会让「改了角色，用户还是老权限」变成一个需要等缓存过期才能解释的现象。
+> 单机 SQLite 上这点查询成本远低于它换来的确定性。
 
 | 项 | 说明 |
 | --- | --- |

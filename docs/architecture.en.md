@@ -94,6 +94,7 @@ status, not by `code`.
 | Parameter validation failed | 400 | `error.validationFailed` |
 | Malformed request body | 400 | `error.malformedBody` |
 | Invalid path parameter | 400 | `error.invalidId` |
+| Malformed date filter | 400 | `error.invalidDate` |
 | Invalid parent node | 400 | `error.invalidParent` |
 | Resource not found | 404 | `error.notFound` |
 | Not logged in / session expired | 401 | `error.unauthorized` |
@@ -439,7 +440,7 @@ error.duplicate             error.invalidPermCode
 error.cannotKickSelf        error.frontendDisabled
 error.invalidJobCron        error.fileTooLarge
 error.quotaExceeded         error.invalidFile
-error.wrongOldPassword
+error.wrongOldPassword      error.invalidDate
 # the next two are produced by the frontend only (web/src/lib/api/client.ts); the backend never returns them:
 error.network               # fetch threw: nothing answered at all
 error.backendUnreachable    # something answered but it was not the envelope: a proxy intercepted it, or the backend is not running
@@ -472,9 +473,16 @@ has no constant anywhere on the backend**, so only the second test can catch it.
 
 ## 8. To-do list
 
-Authentication, authorization, the permission cache, dynamic routing and audit logging are all in place (the
+Authentication, authorization, dynamic routing and audit logging are all in place (the
 implementation notes are in §5 above and in [architecture-server.en.md](architecture-server.en.md)); only the following
 remains.
+
+> One thing that is deliberately **not** done: authorization has **no cross-request permission cache**.
+> `Auth.Require` calls `IdentityOf` on every request (reading `sys_user_roles` + `sys_role_perms`), and
+> `RequirePerm` reuses the copy resolved within that same request. That is intentional — see the reasoning in §5 for
+> rejecting JWT: caching permissions turns "I changed a role but the user still has the old permissions" into a
+> phenomenon you can only explain by waiting for a cache to expire. On a single-machine SQLite setup that query cost is
+> far below the certainty it buys.
 
 | Item | Notes |
 | --- | --- |

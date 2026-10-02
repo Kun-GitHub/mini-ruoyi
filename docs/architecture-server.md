@@ -355,7 +355,7 @@ cd server && go test ./...        # 全部
 go test ./... -run TestNewDB      # 单个
 ```
 
-当前 127 个用例，分布在 18 个测试文件里。`handler` / `job` / `auth` / `domain` / `cmd/server`
+当前 130 个用例，分布在 18 个测试文件里。`handler` / `job` / `auth` / `domain` / `cmd/server`
 没有独立测试文件——它们的正确性由 `httpserver` 的端到端用例覆盖（handler 的每个分支
 基本都对应一条 HTTP 断言）。
 
@@ -364,7 +364,7 @@ go test ./... -run TestNewDB      # 单个
 | `repository/sqlite_test.go` | **每条连接的 PRAGMA 都生效**（防 A1 回归）、WAL 已启用 |
 | `repository/migrate_test.go` | 迁移幂等；在旧版遗留库（有表无迁移记录）上升级不丢数据；**种子密码哈希能通过 bcrypt 校验**；**结构校验能发现「记录说已应用、表却不在」** |
 | `repository/menu_seed_test.go` | **菜单种子与前端对得上**：每条菜单的 `component` 有对应页面、`title_key` 在双语字典里都存在、`path` 不重复；**反向也查**——页面文件不能有谁都点不进去的 |
-| `repository/filter_test.go` | LIKE 通配符转义（`%` / `_` / `\`）、用户输入不被当成通配符、筛选真的命中预期行 |
+| `repository/filter_test.go` | LIKE 通配符转义（`%` / `_` / `\`）、用户输入不被当成通配符、筛选真的命中预期行、**按角色筛不会因多角色把行数翻倍**、日志时间区间（`end` 含当天） |
 | `service/rbac_test.go`（含 `authz_service` 的身份解析） | 删除影响面（含后代菜单的授权）、级联删除、环引用拦截、四条删除守卫、管理员身份解析、分页边界 |
 | `perm/perm_test.go` | 分组覆盖与去重、键名推导约定、未知权限码检出、前端字典覆盖 |
 | `repository/session_repository_test.go` | **datetime 存储格式**、时间往返、过期清理、按用户踢人、删用户级联 |
@@ -375,7 +375,7 @@ go test ./... -run TestNewDB      # 单个
 | `httpserver/rbac_api_test.go` | 权限隔离（有码放行、无码 403）、授权按码精确生效、未知权限码拒绝、409 影响面与 cascade 确认、四条删除守卫、唯一冲突带字段名、重置密码踢会话 |
 | `middleware/middleware_test.go` | 限流按 IP、伪造 `X-Forwarded-For` 无效、请求体上限、缓存头只匹配前缀 |
 | `system/system_test.go` | `/proc/stat` / `meminfo` / `statm` / `loadavg` 的解析（用真实样本）、`guest` 不计两次、单位与不可用标记、非 Linux 平台自报不可用 |
-| `httpserver/monitor_test.go` | 会话列表与踢人、不能踢自己、登录日志记录成败与来源、操作日志记录写操作与 403、**操作日志不含请求体** |
+| `httpserver/monitor_test.go` | 会话列表与踢人、不能踢自己、**强退不存在的用户返回 404**、登录日志记录成败与来源、操作日志记录写操作与 403、**操作日志不含请求体** |
 | `service/job_log_test.go` | 每次执行（成功 / 失败 / 跳过）都留一条记录与触发方式、**两条写库是同一个事务**（第二条失败时 `last_run_at` 不跟着变）、日志按保留期清理且不误删新记录 |
 | `httpserver/job_logs_test.go` | 执行历史的三层授权（401 / 403 / `tool:job:list` 放行）、**触发一次后历史里真出现那一条**、未注册的 key 返回 404、页码越界钳到最后一页 |
 | `httpserver/fixture_test.go` | 不是用例，是被各测试复用的夹具（临时库 + 完整路由） |

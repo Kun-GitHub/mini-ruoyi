@@ -27,6 +27,8 @@
   let filters = $state({
     username: initial.get('username') ?? '',
     status: initial.get('status') ?? '',
+    start: initial.get('start') ?? '',
+    end: initial.get('end') ?? '',
   })
 
   let rows = $state<LoginLog[]>([])
@@ -45,6 +47,10 @@
       q.set('page_size', String(PAGE_SIZE))
       if (filters.username) q.set('username', filters.username)
       if (filters.status) q.set('status', filters.status)
+      // 日期直传 YYYY-MM-DD，不换算成时刻：时区解释归后端一处（服务器本地时区），
+      // 摊到两端的话「界面显示的」和「筛出来的」对不上时很难查
+      if (filters.start) q.set('start', filters.start)
+      if (filters.end) q.set('end', filters.end)
 
       const res = await api.get<Page<LoginLog>>(`/login-logs?${q}`)
       rows = res.list
@@ -71,7 +77,7 @@
   }
 
   function resetFilters() {
-    filters = { username: '', status: '' }
+    filters = { username: '', status: '', start: '', end: '' }
     page = 1
     syncURL()
     void load()
@@ -104,6 +110,16 @@
           <option value="success">{t('loginlog.status.success')}</option>
           <option value="failed">{t('loginlog.status.failed')}</option>
         </NativeSelect>
+      </label>
+      <label class="flex w-48 flex-col gap-1.5 text-sm">
+        <span class="text-muted-foreground">{t('loginlog.time')}</span>
+        <!-- 两个原生 date 输入框并排：范围选择器要么引库，要么自己写弹层，
+             而这里只需要两端各一个日期 -->
+        <div class="flex items-center gap-2">
+          <Input type="date" bind:value={filters.start} />
+          <span class="text-muted-foreground">—</span>
+          <Input type="date" bind:value={filters.end} />
+        </div>
       </label>
 
       <!-- 按钮跟在字段后面，一起换行：字段改成固定宽度后，

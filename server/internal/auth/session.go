@@ -236,7 +236,14 @@ func (s *SessionService) RevokeOthers(ctx context.Context, userID int64, keepTok
 }
 
 // RevokeUser 踢掉某个用户的全部会话。改密码、停用账号后必须调用。
+//
+// 先确认用户存在，理由与 Kick 相同：DeleteByUser 对不存在的用户也返回成功，
+// 那样「这个人已经不在了」和「踢干净了」就分不出来——会话列表那个按钮上会弹一个假的成功提示。
+// 注意「用户存在、只是当下没有会话」是正常情况，不是错误。
 func (s *SessionService) RevokeUser(ctx context.Context, userID int64) error {
+	if _, err := s.users.GetByID(ctx, userID); err != nil {
+		return fmt.Errorf("get user %d: %w", userID, err)
+	}
 	if err := s.sessions.DeleteByUser(ctx, userID); err != nil {
 		return fmt.Errorf("revoke sessions of user %d: %w", userID, err)
 	}

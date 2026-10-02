@@ -169,3 +169,78 @@ func TestRoleFilter(t *testing.T) {
 		t.Errorf("按 %% 筛选得到 %d 条，期望 0", n)
 	}
 }
+
+// TestUserFilterByRole 覆盖「按角色筛用户」。
+//
+// 用的是 EXISTS 子查询而不是 JOIN，这条用例把它钉住：
+// 一个用户挂多个角色时，JOIN 会让他在结果里出现多次，而「共 N 条」
+// 与实际行数对不上是那种很难往筛选条件上想的问题。
+func TestUserFilterByRole(t *testing.T) {
+	repo, ctx := newUserRepo(t)
+	roles := NewRoleRepository(repo.db)
+
+	mkUser := func(username string) int64 {
+		t.Helper()
+		u, err := repo.Create(ctx, domain.User{
+			Username: username, Nickname: username, Password: "x", Status: domain.StatusActive,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return u.ID
+	}
+	mkRole := func(code string) int64 {
+		t.Helper()
+		r, err := roles.Create(ctx, domain.Role{Code: code, Name: code, Status: domain.StatusActive})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r.ID
+	}
+
+	alice := mkUser("alice")
+	bob := mkUser("bob")
+	qa := mkRole("qa")
+	dev := mkRole("dev")
+
+	// alice 挂 qa + dev 两个角色，bob 只挂 dev
+	if err := repo.ReplaceRoles(ctx, alice, []int64{qa, dev}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ReplaceRoles(ctx, bob, []int64{dev}); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name   string
+		filter UserFilter
+		want   int64
+	}{
+		{"两个角色都有的人只出现一次", UserFilter{RoleID: qa}, 1},
+		{"dev 有 alice 和 bob", UserFilter{RoleID: dev}, 2},
+		{"不存在的角色", UserFilter{RoleID: 999999}, 0},
+		{"0 表示不筛，admin 也在内", UserFilter{RoleID: 0}, 3},
+		{"角色 + 用户名组合", UserFilter{RoleID: dev, Username: "bob"}, 1},
+		{"角色 + 对不上的用户名", UserFilter{RoleID: qa, Username: "bob"}, 0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			n, err := repo.Count(ctx, tc.filter)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n != tc.want {
+				t.Errorf("Count = %d，期望 %d", n, tc.want)
+			}
+			// List 与 Count 共用同一套条件，行数必须一致
+			list, err := repo.List(ctx, tc.filter, 100, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if int64(len(list)) != tc.want {
+				t.Errorf("List 返回 %d 条，Count 说 %d 条，两者条件不一致", len(list), tc.want)
+			}
+		})
+	}
+}

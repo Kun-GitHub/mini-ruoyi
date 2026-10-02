@@ -65,7 +65,8 @@
 
   async function kick(s: SessionView) {
     const ok = await confirm({
-      titleKey: 'confirm.deleteTitle',
+      // 不是删除，用通用的「确认删除」会让人以为删了什么东西
+      titleKey: 'confirm.kickTitle',
       bodyKey: 'session.kickConfirm',
       details: [{ labelKey: 'session.user', value: s.username }],
       danger: true,

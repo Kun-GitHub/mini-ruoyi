@@ -79,15 +79,21 @@ func (r *LogRepository) InsertOperLogs(ctx context.Context, logs []domain.OperLo
 }
 
 // LoginLogFilter 是登录日志的筛选条件。
+//
+// Start / End 是零值可选的。语义上是半开区间 [Start, End)，
+// 由 handler 把界面上的「结束日期」换算成次日零点。
 type LoginLogFilter struct {
 	Username string // 模糊
 	Status   string // 精确
+	Start    time.Time
+	End      time.Time
 }
 
 func loginLogWhere(f LoginLogFilter) (string, []any) {
 	var b whereBuilder
 	b.like("username", f.Username)
 	b.eq("status", f.Status)
+	b.timeRange("created_at", f.Start, f.End)
 	return b.clause(), b.args
 }
 
@@ -123,11 +129,13 @@ func (r *LogRepository) ListLoginLogs(ctx context.Context, f LoginLogFilter, lim
 	return list, rows.Err()
 }
 
-// OperLogFilter 是操作日志的筛选条件。
+// OperLogFilter 是操作日志的筛选条件。见 LoginLogFilter 对 Start / End 的说明。
 type OperLogFilter struct {
 	Username string // 模糊
 	Method   string // 精确
 	Path     string // 模糊
+	Start    time.Time
+	End      time.Time
 }
 
 func operLogWhere(f OperLogFilter) (string, []any) {
@@ -135,6 +143,7 @@ func operLogWhere(f OperLogFilter) (string, []any) {
 	b.like("username", f.Username)
 	b.eq("method", f.Method)
 	b.like("path", f.Path)
+	b.timeRange("created_at", f.Start, f.End)
 	return b.clause(), b.args
 }
 

@@ -20,8 +20,8 @@ export default defineConfig({
   server: {
     // 开发时把后端接口代理给本地 Go 服务，前端热更新与后端互不干扰
     proxy: {
-      '/api': 'http://192.168.201.66:8080',
-      '/healthz': 'http://192.168.201.66:8080',
+      '/api': 'http://127.0.0.1:8080',
+      '/healthz': 'http://127.0.0.1:8080',
     },
   },
 })

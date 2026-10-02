@@ -133,6 +133,8 @@ export const enUS: Record<keyof typeof zhCN, string> = {
   'page.forbidden.body': 'Your account does not have permission to view this page.',
 
   'confirm.deleteTitle': 'Confirm deletion',
+  // A force logout is not a deletion; titling it "Confirm deletion" makes people think something got removed
+  'confirm.kickTitle': 'Confirm force logout',
   'confirm.deleteBody': 'This cannot be undone. Continue?',
   'confirm.hasDependents': 'This resource has related data. Deleting it will also affect:',
   'confirm.cascade': 'Delete anyway',
@@ -209,20 +211,23 @@ export const enUS: Record<keyof typeof zhCN, string> = {
   'session.kickUser': 'Sign out',
   'session.current': 'Current session',
   'session.kickConfirm': 'Force this user to sign out? They will need to sign in again.',
+  'session.kickAllConfirm': 'Every login session of this user is invalidated immediately; they will have to sign in again.',
 
   'loginlog.title': 'Login log',
-  'loginlog.hint': 'Both successful and failed attempts are recorded. Successes alone would hide brute-force attempts. Logs are written in batches, so entries may lag by up to 2 seconds.',
+  'loginlog.hint': 'Both successful and failed attempts are recorded. Successes alone would hide brute-force attempts. Logs are written in batches, so entries may lag by up to 2 seconds. The date filter uses server local time and includes both end days.',
   'loginlog.status.success': 'Success',
   'loginlog.status.failed': 'Failed',
   'loginlog.reason': 'Reason',
+  'loginlog.time': 'Date range',
 
   'operlog.title': 'Operation log',
-  'operlog.hint': 'Only write operations (create/update/delete) and rejected requests are recorded. Request bodies are not logged — login and password endpoints carry plaintext passwords. Logs are written in batches, so entries may lag by up to 2 seconds.',
+  'operlog.hint': 'Only write operations (create/update/delete) and rejected requests are recorded. Request bodies are not logged — login and password endpoints carry plaintext passwords. Logs are written in batches, so entries may lag by up to 2 seconds. The date filter uses server local time and includes both end days.',
   'operlog.path': 'Endpoint',
   'operlog.duration': 'Duration',
   'operlog.result': 'Result',
   'operlog.success': 'OK',
   'operlog.method': 'Method',
+  'operlog.time': 'Date range',
 
   'perm.group.monitor.session': 'Active sessions',
   'perm.group.monitor.loginlog': 'Login log',
@@ -304,6 +309,7 @@ export const enUS: Record<keyof typeof zhCN, string> = {
   'profile.passwordMismatch': 'The two new passwords do not match',
   'profile.passwordChanged': 'Password changed; other devices have been signed out',
   'profile.noPermissionHint': 'This changes your own account and needs no admin permission.',
+  'error.invalidDate': 'Invalid date; expected the form 2026-09-30',
   'error.wrongOldPassword': 'Current password is incorrect',
 
   // ---- System monitor ----

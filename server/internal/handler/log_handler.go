@@ -18,10 +18,16 @@ func NewLogHandler(logs *service.LogService) *LogHandler {
 
 func (h *LogHandler) ListLoginLogs(c *gin.Context) {
 	page, pageSize := pageParams(c)
+	start, end, err := dateRange(c)
+	if err != nil {
+		return
+	}
 
 	result, err := h.logs.ListLoginLogs(c.Request.Context(), repository.LoginLogFilter{
 		Username: c.Query("username"),
 		Status:   c.Query("status"),
+		Start:    start,
+		End:      end,
 	}, page, pageSize)
 	if err != nil {
 		httpx.FailFromError(c, err)
@@ -32,11 +38,17 @@ func (h *LogHandler) ListLoginLogs(c *gin.Context) {
 
 func (h *LogHandler) ListOperLogs(c *gin.Context) {
 	page, pageSize := pageParams(c)
+	start, end, err := dateRange(c)
+	if err != nil {
+		return
+	}
 
 	result, err := h.logs.ListOperLogs(c.Request.Context(), repository.OperLogFilter{
 		Username: c.Query("username"),
 		Method:   c.Query("method"),
 		Path:     c.Query("path"),
+		Start:    start,
+		End:      end,
 	}, page, pageSize)
 	if err != nil {
 		httpx.FailFromError(c, err)

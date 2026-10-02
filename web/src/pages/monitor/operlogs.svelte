@@ -27,6 +27,8 @@
     username: initial.get('username') ?? '',
     method: initial.get('method') ?? '',
     path: initial.get('path') ?? '',
+    start: initial.get('start') ?? '',
+    end: initial.get('end') ?? '',
   })
 
   let rows = $state<OperLog[]>([])
@@ -46,6 +48,9 @@
       if (filters.username) q.set('username', filters.username)
       if (filters.method) q.set('method', filters.method)
       if (filters.path) q.set('path', filters.path)
+      // 日期直传 YYYY-MM-DD，时区解释归后端一处（服务器本地时区）
+      if (filters.start) q.set('start', filters.start)
+      if (filters.end) q.set('end', filters.end)
 
       const res = await api.get<Page<OperLog>>(`/oper-logs?${q}`)
       rows = res.list
@@ -72,7 +77,7 @@
   }
 
   function resetFilters() {
-    filters = { username: '', method: '', path: '' }
+    filters = { username: '', method: '', path: '', start: '', end: '' }
     page = 1
     syncURL()
     void load()
@@ -110,6 +115,16 @@
       <label class="flex w-48 flex-col gap-1.5 text-sm">
         <span class="text-muted-foreground">{t('operlog.path')}</span>
         <Input bind:value={filters.path} onkeydown={(e) => e.key === 'Enter' && search()} />
+      </label>
+      <label class="flex w-48 flex-col gap-1.5 text-sm">
+        <span class="text-muted-foreground">{t('operlog.time')}</span>
+        <!-- 两个原生 date 输入框并排：范围选择器要么引库，要么自己写弹层，
+             而这里只需要两端各一个日期 -->
+        <div class="flex items-center gap-2">
+          <Input type="date" bind:value={filters.start} />
+          <span class="text-muted-foreground">—</span>
+          <Input type="date" bind:value={filters.end} />
+        </div>
       </label>
 
       <!-- 按钮跟在字段后面，一起换行：字段改成固定宽度后，

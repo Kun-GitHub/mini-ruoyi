@@ -112,7 +112,7 @@ cp config/config.example.yaml config/config.yaml   # 可选，不改也能跑
 | PUT | `/roles/:id/grants` | `system:role:edit` | 覆盖式重设授权 |
 | DELETE | `/roles/:id` | `system:role:delete` | 支持 `?cascade=true` |
 | GET | `/perms` | `system:perm:list` | 权限清单，按资源分组，**含每个权限码保护的接口**（来自启动时装配的路由表，不查库） |
-| GET | `/users` | `system:user:list` | 分页 |
+| GET | `/users` | `system:user:list` | 分页，支持 `username` / `nickname` / `mobile` / `status` / `role_id` 筛选 |
 | GET | `/users/:id` | `system:user:list` | 含 `role_ids` |
 | POST | `/users` | `system:user:add` | |
 | PUT | `/users/:id` | `system:user:edit` | 用户名不可变 |
@@ -123,8 +123,8 @@ cp config/config.example.yaml config/config.yaml   # 可选，不改也能跑
 | GET | `/sessions` | `monitor:session:list` | 在线会话（未过期的），最近活跃在前 |
 | DELETE | `/sessions/:hash` | `monitor:session:kick` | 踢掉一条会话，对方下次请求即失效 |
 | DELETE | `/users/:id/sessions` | `monitor:session:kick` | 强退某用户全部会话 |
-| GET | `/login-logs` | `monitor:loginlog:list` | 登录日志，支持 `username` / `status` 筛选 |
-| GET | `/oper-logs` | `monitor:operlog:list` | 操作日志，支持 `username` / `method` / `path` 筛选 |
+| GET | `/login-logs` | `monitor:loginlog:list` | 登录日志，支持 `username` / `status` / `start` / `end` 筛选 |
+| GET | `/oper-logs` | `monitor:operlog:list` | 操作日志，支持 `username` / `method` / `path` / `start` / `end` 筛选 |
 | GET | `/files` | `tool:file:list` | 文件列表，响应还带容量用量 |
 | GET | `/files/:id/download` | `tool:file:list` | 下载。**强制保存**，不做内联预览 |
 | POST | `/files` | `tool:file:upload` | multipart 上传，字段名 `file`，可带 `group` |
@@ -197,7 +197,7 @@ curl -b cookie.txt -X DELETE localhost:8080/api/v1/menus/1
 
 | HTTP | `msg` |
 | --- | --- |
-| 400 | `error.validationFailed` / `error.malformedBody` / `error.invalidId` / `error.invalidParent` / `error.invalidPermCode` |
+| 400 | `error.validationFailed` / `error.malformedBody` / `error.invalidId` / `error.invalidDate` / `error.invalidParent` / `error.invalidPermCode` |
 | 401 | `error.unauthorized` / `error.badCredentials` |
 | 403 | `error.forbidden` / `error.protected` / `error.accountDisabled` / `error.cannotDeleteSelf` / `error.cannotKickSelf` / `error.csrfInvalid` |
 | 404 | `error.notFound` |

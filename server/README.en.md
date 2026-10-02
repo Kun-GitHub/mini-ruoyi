@@ -116,7 +116,7 @@ response or from the `csrf_token` field of `/auth/me`.
 | PUT | `/roles/:id/grants` | `system:role:edit` | overwrites the grants wholesale |
 | DELETE | `/roles/:id` | `system:role:delete` | supports `?cascade=true` |
 | GET | `/perms` | `system:perm:list` | the permission list, grouped by resource, **including the endpoints each permission code guards** (from the route table assembled at startup; no database query) |
-| GET | `/users` | `system:user:list` | paginated |
+| GET | `/users` | `system:user:list` | paginated, filterable by `username` / `nickname` / `mobile` / `status` / `role_id` |
 | GET | `/users/:id` | `system:user:list` | includes `role_ids` |
 | POST | `/users` | `system:user:add` | |
 | PUT | `/users/:id` | `system:user:edit` | the username is immutable |
@@ -127,8 +127,8 @@ response or from the `csrf_token` field of `/auth/me`.
 | GET | `/sessions` | `monitor:session:list` | online sessions (unexpired), most recently active first |
 | DELETE | `/sessions/:hash` | `monitor:session:kick` | kick one session; the other side is invalidated on its next request |
 | DELETE | `/users/:id/sessions` | `monitor:session:kick` | force-log-out all of one user's sessions |
-| GET | `/login-logs` | `monitor:loginlog:list` | login logs, filterable by `username` / `status` |
-| GET | `/oper-logs` | `monitor:operlog:list` | operation logs, filterable by `username` / `method` / `path` |
+| GET | `/login-logs` | `monitor:loginlog:list` | login logs, filterable by `username` / `status` / `start` / `end` |
+| GET | `/oper-logs` | `monitor:operlog:list` | operation logs, filterable by `username` / `method` / `path` / `start` / `end` |
 | GET | `/files` | `tool:file:list` | file list; the response also carries quota usage |
 | GET | `/files/:id/download` | `tool:file:list` | download. **Forced save**; no inline preview |
 | POST | `/files` | `tool:file:upload` | multipart upload, field name `file`, optional `group` |
@@ -203,7 +203,7 @@ On a failing response `msg` is an **i18n key**, not text; the frontend renders t
 
 | HTTP | `msg` |
 | --- | --- |
-| 400 | `error.validationFailed` / `error.malformedBody` / `error.invalidId` / `error.invalidParent` / `error.invalidPermCode` |
+| 400 | `error.validationFailed` / `error.malformedBody` / `error.invalidId` / `error.invalidDate` / `error.invalidParent` / `error.invalidPermCode` |
 | 401 | `error.unauthorized` / `error.badCredentials` |
 | 403 | `error.forbidden` / `error.protected` / `error.accountDisabled` / `error.cannotDeleteSelf` / `error.cannotKickSelf` / `error.csrfInvalid` |
 | 404 | `error.notFound` |

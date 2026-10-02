@@ -142,3 +142,30 @@ test('重置密码后提示会话已失效', async ({ page }) => {
 
   await expectToast(page, /该用户的登录会话已全部失效/)
 })
+
+test('按角色筛选：只留下持有该角色的用户', async ({ page }) => {
+  // 登录与打开页面由 beforeEach 负责，这里不要再调一次：
+  // 已登录时 /login 会重定向回应用，loginAsAdmin 的两个 getByLabel 会落到
+  // 筛选栏的「用户名」上（填进去一个 admin），然后在找「密码」时超时。
+  const name = unique('rolefilter')
+
+  // 建一个不挂任何角色的用户
+  await page.getByRole('button', { name: '新增' }).click()
+  await dialog(page).getByLabel('用户名').fill(name)
+  await dialog(page).getByLabel('密码').fill('rolefilter-pw')
+  await dialog(page).getByRole('button', { name: '保存' }).click()
+  await expect(dialog(page)).toBeHidden()
+
+  // 按「超级管理员」筛。admin 有它、刚建的这个没有，
+  // 所以一次断言同时覆盖了「命中」和「不该出现」两个方向
+  await filters(page).getByRole('combobox', { name: '角色' }).selectOption({ label: '超级管理员' })
+  await page.getByRole('button', { name: '查询' }).click()
+
+  await expect(page.getByRole('row').filter({ hasText: 'admin' }).first()).toBeVisible()
+  await expect(page.getByRole('row').filter({ hasText: name })).toHaveCount(0)
+
+  // 筛选条件要进 URL，刷新后仍然生效（和其它筛选一致的约定）
+  await expect(page).toHaveURL(/role_id=/)
+  await page.reload()
+  await expect(page.getByRole('row').filter({ hasText: name })).toHaveCount(0)
+})

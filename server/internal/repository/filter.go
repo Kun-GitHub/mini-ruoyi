@@ -1,6 +1,9 @@
 package repository
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // likePattern 把用户输入包成 LIKE 模式，并转义 LIKE 的通配符。
 //
@@ -41,10 +44,36 @@ func (b *whereBuilder) eq(column, value string) {
 	b.args = append(b.args, value)
 }
 
+// timeRange 加一对时间边界：from 含、to **不含**（半开区间）。
+//
+// 用 `< to` 而不是 `<= 23:59:59`：后者会漏掉那一秒里的亚秒部分。
+// 现在写入的精度恰好是秒，但依赖这个巧合太脆。
+//
+// 零值表示不筛这一端，所以只传一端也成立。
+func (b *whereBuilder) timeRange(column string, from, to time.Time) {
+	if !from.IsZero() {
+		b.conds = append(b.conds, column+" >= ?")
+		b.args = append(b.args, toDBTime(from))
+	}
+	if !to.IsZero() {
+		b.conds = append(b.conds, column+" < ?")
+		b.args = append(b.args, toDBTime(to))
+	}
+}
+
 // clause 返回可直接拼在 FROM 之后的片段；没有任何条件时返回空串。
 func (b *whereBuilder) clause() string {
 	if len(b.conds) == 0 {
 		return ""
 	}
 	return " WHERE " + strings.Join(b.conds, " AND ")
+}
+
+// raw 追加一条带参数的条件，给 like / eq / timeRange 覆盖不到的场景用。
+//
+// SQL 片段必须是包内的常量——这里不做任何转义或校验，
+// 把外部输入拼进来就是注入。
+func (b *whereBuilder) raw(cond string, args ...any) {
+	b.conds = append(b.conds, cond)
+	b.args = append(b.args, args...)
 }

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -137,6 +138,21 @@ func TestCannotForceLogoutSelf(t *testing.T) {
 	}
 }
 
+// TestForceLogoutUnknownUserIs404 对不存在的用户强退要报 404，与「踢不存在的会话」一致。
+//
+// 不这么做的后果在界面上：用户页面的每一行都是库里读出来的，但删掉用户与点击强退
+// 之间存在窗口，返回 200 会弹一个假的成功提示。「用户存在但当下没有会话」是另一回事，
+// 那是正常的 200。
+func TestForceLogoutUnknownUserIs404(t *testing.T) {
+	r, _ := newTestRouter(t)
+	admin := login(t, r, "admin", "admin123")
+
+	w := call(t, r, http.MethodDelete, "/api/v1/users/999999/sessions", "", admin)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("强退不存在的用户返回 %d，期望 404（不能返回 200 让人以为踢成功了）", w.Code)
+	}
+}
+
 // ---------- 日志 ----------
 
 // submitLogin 提交一次登录尝试，不断言结果——失败的那些用例也要用它。
@@ -222,6 +238,81 @@ func TestLoginLogsRecordSuccessAndFailure(t *testing.T) {
 }
 
 // TestOperLogsRecordWritesAndDenials 覆盖操作日志的记录范围。
+// TestLogDateFilter 覆盖日志的时间范围筛选。
+//
+// 重点是 **end 含当天**：界面上选的是「日期」而不是「时刻」，选 10-01 到 10-01
+// 必须包含那一整天。实现上 handler 把 end +1 天变成开区间上界——
+// 漏掉这一步的话「选了今天却什么都没有」，而今天的日志恰恰是最常查的。
+//
+// 两种日志各查一遭：它们用各自的 filter 结构体，
+// 只测一个的话，另一个漏接了参数也不会被发现。
+func TestLogDateFilter(t *testing.T) {
+	deps := testDeps(t, testWebDir(t))
+	r, table, err := NewRouter(deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testRouteTable = table
+
+	admin := login(t, r, "admin", "admin123")
+	// 各造一条：一次失败的登录、一次成功的写操作
+	submitLogin(t, r, "admin", "wrong-password")
+	createUser(t, r, admin, "datefilter", "datefilter-pw")
+
+	if err := testLogSvc.Flush(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	today := time.Now().Format("2006-01-02")
+	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	tomorrow := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
+
+	for _, ep := range []string{"/api/v1/login-logs", "/api/v1/oper-logs"} {
+		t.Run(ep, func(t *testing.T) {
+			cases := []struct {
+				name  string
+				query string
+				hit   bool
+			}{
+				{"不筛时间", "", true},
+				{"今天到今天（end 必须含当天）", "?start=" + today + "&end=" + today, true},
+				{"昨天到今天", "?start=" + yesterday + "&end=" + today, true},
+				{"昨天到昨天", "?start=" + yesterday + "&end=" + yesterday, false},
+				{"从明天起", "?start=" + tomorrow, false},
+				{"只给 start 不管上界", "?start=" + yesterday, true},
+			}
+
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					w := call(t, r, http.MethodGet, ep+tc.query, "", admin)
+					if w.Code != http.StatusOK {
+						t.Fatalf("返回 %d: %s", w.Code, w.Body.String())
+					}
+					var got struct {
+						Data struct {
+							Total int64 `json:"total"`
+						} `json:"data"`
+					}
+					if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+						t.Fatal(err)
+					}
+					if hit := got.Data.Total > 0; hit != tc.hit {
+						t.Errorf("%s%s 命中 %d 条，期望命中=%v", ep, tc.query, got.Data.Total, tc.hit)
+					}
+				})
+			}
+
+			// 格式错报 400，不能静默忽略——静默忽略的话用户会以为筛选生效了，
+			// 对着一份没筛过的数据找问题
+			for _, bad := range []string{"?start=2026-13-99", "?start=昨天", "?end=2026/10/01"} {
+				if w := call(t, r, http.MethodGet, ep+bad, "", admin); w.Code != http.StatusBadRequest {
+					t.Errorf("%s%s 返回 %d，期望 400", ep, bad, w.Code)
+				}
+			}
+		})
+	}
+}
+
 func TestOperLogsRecordWritesAndDenials(t *testing.T) {
 	deps := testDeps(t, testWebDir(t))
 	r, table, err := NewRouter(deps)

@@ -361,7 +361,7 @@ cd server && go test ./...        # everything
 go test ./... -run TestNewDB      # one test
 ```
 
-There are 127 cases across 18 test files today. `handler` / `job` / `auth` / `domain` / `cmd/server` have no test files of
+There are 130 cases across 18 test files today. `handler` / `job` / `auth` / `domain` / `cmd/server` have no test files of
 their own — their correctness is covered by the end-to-end cases in `httpserver` (essentially every branch of a handler
 maps to one HTTP assertion).
 
@@ -370,7 +370,7 @@ maps to one HTTP assertion).
 | `repository/sqlite_test.go` | **the PRAGMAs take effect on every connection** (guarding against the regression above), WAL is enabled |
 | `repository/migrate_test.go` | migration idempotence; upgrading a legacy database (tables but no migration records) without losing data; **the seeded password hash passes a bcrypt check**; **schema verification detects "the record says applied but the table is gone"** |
 | `repository/menu_seed_test.go` | **the menu seed matches the frontend**: every menu's `component` has a page, its `title_key` exists in both dictionaries, no duplicated paths — and in reverse, no page is unreachable from the menu |
-| `repository/filter_test.go` | LIKE wildcard escaping (`%` / `_` / `\`), user input never treated as a wildcard, filters really matching the expected rows |
+| `repository/filter_test.go` | LIKE wildcard escaping (`%` / `_` / `\`), user input never treated as a wildcard, filters really matching the expected rows, **filtering by role not duplicating rows for multi-role users** |
 | `service/rbac_test.go` (including identity resolution in `authz_service`) | delete impact (including grants on descendant menus), cascade delete, cycle-reference rejection, four delete guards, administrator identity resolution, pagination edges |
 | `perm/perm_test.go` | group coverage and uniqueness, key-naming convention, detection of unknown permission codes, frontend dictionary coverage |
 | `repository/session_repository_test.go` | **the datetime storage format**, time round-trips, expiry cleanup, kicking by user, cascading on user delete |
@@ -381,7 +381,7 @@ maps to one HTTP assertion).
 | `httpserver/rbac_api_test.go` | permission isolation (holding the code passes, missing it gives 403), grants taking effect per code, unknown permission codes rejected, the 409 impact and cascade confirmation, the four delete guards, unique conflicts carrying the field name, resetting a password kicking sessions |
 | `middleware/middleware_test.go` | rate limiting per IP, spoofed `X-Forwarded-For` being ignored, the request body cap, cache headers matching the prefix only |
 | `system/system_test.go` | parsing `/proc/stat` / `meminfo` / `statm` / `loadavg` (using real samples), `guest` not counted twice, units and the unavailable flag, non-Linux platforms reporting unavailability |
-| `httpserver/monitor_test.go` | the session list and kicking, not being able to kick yourself, login logs recording success and origin, operation logs recording writes and 403s, **operation logs containing no request bodies** |
+| `httpserver/monitor_test.go` | the session list and kicking, not being able to kick yourself, **404 when force-logging-out an unknown user**, login logs recording success and origin, operation logs recording writes and 403s, **operation logs containing no request bodies** |
 | `service/job_log_test.go` | every run (success / failure / skip) leaves a record with its trigger, **both writes share one transaction** (when the second fails, `last_run_at` does not move), logs are cleaned up by retention without touching fresh rows |
 | `httpserver/job_logs_test.go` | the three authorization layers on run history (401 / 403 / `tool:job:list` allows), **one trigger makes exactly one row appear**, an unregistered key returns 404, an out-of-range page is clamped to the last one |
 | `httpserver/fixture_test.go` | not a test case but the fixture the other tests reuse (a temporary database plus the full router) |
