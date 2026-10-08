@@ -169,3 +169,71 @@ test('按角色筛选：只留下持有该角色的用户', async ({ page }) => 
   await page.reload()
   await expect(page.getByRole('row').filter({ hasText: name })).toHaveCount(0)
 })
+
+/** 造一个 CSV 文件并塞进导入弹窗的文件框。 */
+async function pickCsv(page: import('@playwright/test').Page, rows: string[][]) {
+  const csv = ['username,nickname,mobile,email,status', ...rows.map((r) => r.join(','))].join('\n')
+  await page.getByTestId('import-file').setInputFiles({
+    name: 'users.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from(csv, 'utf8'),
+  })
+}
+
+test('导出链接带上筛选条件（含角色），点击能下载', async ({ page }) => {
+  const name = await createUser(page)
+  await filterBy(page, name)
+
+  const link = page.getByTestId('export-users')
+  await expect(link).toHaveAttribute('href', new RegExp(`username=${name}`))
+
+  // 角色筛选也得进导出条件：漏掉它，导出的就不是屏幕上看到的那批数据
+  await filters(page).getByRole('combobox', { name: '角色' }).selectOption({ label: '超级管理员' })
+  await page.getByRole('button', { name: '查询' }).click()
+  await expect(link).toHaveAttribute('href', /role_id=\d+/)
+
+  // 真下一下：链接拼对了不等于后端会返回文件
+  const [download] = await Promise.all([page.waitForEvent('download'), link.click()])
+  expect(download.suggestedFilename()).toMatch(/^users-\d{8}-\d{6}\.csv$/)
+})
+
+test('导入：有坏行时只校验不写入，确认导入按钮不可点', async ({ page }) => {
+  const good = unique('e2eimp')
+
+  await page.getByTestId('import-open').click()
+  await dialog(page).getByLabel('密码').fill('e2e-import-pw')
+  // 第 2 行合格，第 3 行缺用户名——「一行不合格就一行都不写」
+  await pickCsv(page, [
+    [good, '导入测试', '13800000000', 'imp@example.com', 'active'],
+    ['', '没有用户名', '', '', 'active'],
+  ])
+  await page.getByTestId('import-check').click()
+
+  await expect(page.getByTestId('import-report')).toContainText('共 2 行，可用 1 行，已导入 0 行')
+  // 行号是文件里的行号，表头算第 1 行；缺用户名报在 required 上
+  await expect(page.getByTestId('import-report')).toContainText('第 3 行')
+  await expect(page.getByTestId('import-report')).toContainText('用户名不能为空')
+  await expect(page.getByTestId('import-confirm')).toBeDisabled()
+
+  // 干跑真的没写库：那行合格的用户不该出现
+  await dialog(page).getByRole('button', { name: '取消' }).click()
+  await filterBy(page, good)
+  await expect(page.getByText('共 0 条')).toBeVisible()
+})
+
+test('导入：全部合格时写入，列表里能查到', async ({ page }) => {
+  const name = unique('e2eimpok')
+
+  await page.getByTestId('import-open').click()
+  await dialog(page).getByLabel('密码').fill('e2e-import-pw')
+  await pickCsv(page, [[name, '导入成功', '13900000000', 'impok@example.com', 'active']])
+  await page.getByTestId('import-check').click()
+
+  await expect(page.getByTestId('import-report')).toContainText('共 1 行，可用 1 行，已导入 0 行')
+  await expect(page.getByTestId('import-report')).toContainText('校验通过，可以导入')
+  await page.getByTestId('import-confirm').click()
+
+  await expectToast(page, '已导入 1 个用户')
+  await filterBy(page, name)
+  await expect(page.getByRole('cell', { name })).toBeVisible()
+})

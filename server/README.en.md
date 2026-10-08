@@ -87,7 +87,7 @@ Everything lives under `/api/v1`. The full contract (envelope, error keys, delet
 At startup it prints the current endpoint breakdown:
 
 ```
-已注册 39 个 API 端点（公开 1 / 仅登录 4 / 需权限 34）
+已注册 42 个 API 端点（公开 1 / 仅登录 4 / 需权限 37）
 ```
 
 **How authentication works**: after login the server hands out an `mr_session` cookie (HttpOnly / SameSite=Lax).
@@ -123,12 +123,15 @@ response or from the `csrf_token` field of `/auth/me`.
 | PUT | `/users/:id/roles` | `system:user:edit` | |
 | PUT | `/users/:id/password` | `system:user:resetPwd` | **immediately kicks all of that user's sessions** after a reset |
 | DELETE | `/users/:id` | `system:user:delete` | |
+| GET | `/users/export` | `system:user:list` | export CSV under the current filters; more than 10000 rows is an error, never a silent truncation |
+| POST | `/users/import` | `system:user:add` | import CSV (multipart: `file` + `password`); if one row fails nothing is written, `?dry_run=1` validates only |
 | GET | `/system` | `monitor:system:list` | this machine's CPU / memory / disk / Go process state |
 | GET | `/sessions` | `monitor:session:list` | online sessions (unexpired), most recently active first |
 | DELETE | `/sessions/:hash` | `monitor:session:kick` | kick one session; the other side is invalidated on its next request |
 | DELETE | `/users/:id/sessions` | `monitor:session:kick` | force-log-out all of one user's sessions |
 | GET | `/login-logs` | `monitor:loginlog:list` | login logs, filterable by `username` / `status` / `start` / `end` |
 | GET | `/oper-logs` | `monitor:operlog:list` | operation logs, filterable by `username` / `method` / `path` / `start` / `end` |
+| GET | `/oper-logs/export` | `monitor:operlog:list` | export CSV under the current filters (one column more than the list: `user_agent`) |
 | GET | `/files` | `tool:file:list` | file list; the response also carries quota usage |
 | GET | `/files/:id/download` | `tool:file:list` | download. **Forced save**; no inline preview |
 | POST | `/files` | `tool:file:upload` | multipart upload, field name `file`, optional `group` |
@@ -305,7 +308,7 @@ The complete 12-step recipe for adding a resource is in that same document.
 ## Not implemented yet
 
 - **Login-failure lockout**: today only a login log is written; failures are not counted and accounts are not locked
-- **List export**: users/roles/logs have no export endpoint
+- **List export**: users and operation logs now export (users also import CSV); roles and login logs still do not
 
 The `devices` sample resource has been removed: under a fail-closed permission model it would either pollute the
 production permission list or leave behind a permissionless CRUD endpoint, and neither belongs in a release.

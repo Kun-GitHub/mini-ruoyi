@@ -69,6 +69,19 @@ const (
 	KeyInvalidFile     = "error.invalidFile"
 	KeyDuplicate       = "error.duplicate"
 	KeyInvalidPermCode = "error.invalidPermCode"
+	// 导入导出相关的容量与输入问题。
+	// KeyImportNoFile 请求里没有文件字段。
+	KeyImportNoFile = "error.importNoFile"
+	// KeyImportMissingColumns 导入文件缺必需列，缺哪些放在 data.missing 里。
+	//
+	// 这个键**不带占位符**：前端 client.ts 的 ApiError 只保留 code/msg/errors，
+	// data 会被丢掉，所以文案里塞 {columns} 只会把占位符原样显示出来。
+	// 缺列明细由 response.data.missing 承载（调用方直接读 data 才拿得到）。
+	KeyImportMissingColumns = "error.importMissingColumns"
+	// KeyImportTooManyRows 导入/导出的行数超过上限。超限是报错而不是截断——
+	// 截断会让人以为「文件里就这些内容」。
+	KeyImportTooManyRows = "error.importTooManyRows"
+	KeyExportTooManyRows = "error.exportTooManyRows"
 )
 
 // SuccessMsg 是成功响应的 msg 值。它不是 i18n 键，前端不需要翻译。
@@ -137,6 +150,34 @@ func ResultKey(c *gin.Context) string {
 func Fail(c *gin.Context, httpStatus int, msgKey string) {
 	c.Set(resultKeyCtx, msgKey)
 	write(c, httpStatus, Response{Msg: msgKey})
+}
+
+// FailData 写失败响应，并带上结构化细节。
+//
+// 与 Fail 的唯一区别是 data。只有少数失败需要细节（例如导入缺了哪些列），
+// 而细节必须让调用方看得见，不能只给一个错误键。
+// 注意：写进 data 的内容在界面上拿不到（client.ts 的 ApiError 丢弃 data），
+// 所以它服务于集成方与测试，不能当作用户可见的提示。
+func FailData(c *gin.Context, httpStatus int, msgKey string, data any) {
+	c.Set(resultKeyCtx, msgKey)
+	write(c, httpStatus, Response{Msg: msgKey, Data: data})
+}
+
+// FieldErrors 把校验错误展开成字段级数组；不是校验错误时返回 nil。
+func FieldErrors(err error) []FieldError {
+	var validationErrs validator.ValidationErrors
+	if !errors.As(err, &validationErrs) {
+		return nil
+	}
+	fields := make([]FieldError, 0, len(validationErrs))
+	for _, fe := range validationErrs {
+		fields = append(fields, FieldError{
+			Field: fe.Field(),
+			Rule:  fe.Tag(),
+			Param: fe.Param(),
+		})
+	}
+	return fields
 }
 
 // FailValidation 写参数校验失败响应，msg 固定为 KeyValidationFailed，
@@ -241,16 +282,7 @@ func FailBindError(c *gin.Context, err error) {
 		return
 	}
 
-	var validationErrs validator.ValidationErrors
-	if errors.As(err, &validationErrs) {
-		fields := make([]FieldError, 0, len(validationErrs))
-		for _, fe := range validationErrs {
-			fields = append(fields, FieldError{
-				Field: fe.Field(),
-				Rule:  fe.Tag(),
-				Param: fe.Param(),
-			})
-		}
+	if fields := FieldErrors(err); fields != nil {
 		FailValidation(c, fields)
 		return
 	}

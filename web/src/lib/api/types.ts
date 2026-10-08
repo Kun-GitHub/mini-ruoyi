@@ -1,5 +1,7 @@
 /** 与后端 DTO 一一对应的类型。字段名保持后端的 snake_case，不做本地改名。 */
 
+import type { FieldError } from './client'
+
 export type { FieldError } from './client'
 
 export type Status = 'active' | 'inactive'
@@ -21,6 +23,25 @@ export type User = {
 
 export type UserDetail = User & {
   role_ids: number[]
+}
+
+/** 一条绑在**文件行号**上的导入错误。row 是文件里的行号（表头算第 1 行）。 */
+export type ImportRowError = FieldError & {
+  row: number
+}
+
+/**
+ * 导入接口的返回体，对应后端 handler.importReport。
+ *
+ * 逐行错误在这里而不在 ApiError.fieldErrors 里：校验失败也返回 200，
+ * 因为「哪一行错了」是导入结果的核心信息，而失败响应只保留 code/msg/errors。
+ */
+export type ImportReport = {
+  total: number
+  /** 能进库的行数（一行可能同时踩多条规则） */
+  valid: number
+  imported: number
+  errors: ImportRowError[]
 }
 
 export type Role = {

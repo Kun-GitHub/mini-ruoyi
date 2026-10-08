@@ -3,7 +3,7 @@
 
   import { ApiError, api } from '$lib/api/client'
   import { deleteWithConfirm } from '$lib/api/delete'
-  import type { FieldError, Page, Role, User, UserDetail } from '$lib/api/types'
+  import type { FieldError, ImportReport, Page, Role, User, UserDetail } from '$lib/api/types'
   import { Badge } from '$lib/components/ui/badge'
   import { Button } from '$lib/components/ui/button'
   import {
@@ -25,8 +25,8 @@
     TableHeader,
     TableRow,
   } from '$lib/components/ui/table'
-  import { fieldErrorOf } from '$lib/i18n/errors'
-  import { t } from '$lib/i18n/index.svelte'
+  import { fieldErrorOf, validationText } from '$lib/i18n/errors'
+  import { t, type MessageKey } from '$lib/i18n/index.svelte'
   import { replaceQuery, route } from '$lib/router.svelte'
   import { confirm } from '$lib/stores/confirm.svelte'
   import { notifyError, notifySuccess } from '$lib/stores/notify.svelte'
@@ -137,8 +137,111 @@
     }
   }
 
-  function errKey(err: unknown): string {
-    return err instanceof ApiError ? err.key : 'error.internal'
+  // 后端的键是字符串，这里收窄成 MessageKey：它最后总是喂给 t() 或 notifyError()，
+  // 收窄一次比在每个调用点 as 一次要好
+  function errKey(err: unknown): MessageKey {
+    return err instanceof ApiError ? (err.key as MessageKey) : 'error.internal'
+  }
+
+  // ---- 导入 / 导出 ----
+
+  /**
+   * 导出链接用 `Button` 的 href 分支（渲染成 `<a>`），而不是按钮 + onclick。
+   *
+   * 导出是浏览器的下载行为：交给它自己处理进度、保存位置与失败重试。
+   * 用 fetch 拿 blob 再手工造链接要多写一堆代码，还会把整份文件读进内存。
+   *
+   * 筛选条件必须带上：导出的应该是屏幕上看到的那些行，不是全表。
+   */
+  const exportHref = $derived.by(() => {
+    const q = new URLSearchParams()
+    for (const key of ['username', 'nickname', 'mobile', 'status', 'role_id'] as const) {
+      if (filters[key]) q.set(key, filters[key])
+    }
+    const qs = q.toString()
+    return `/api/v1/users/export${qs ? `?${qs}` : ''}`
+  })
+
+  /** 报告里最多列出的错误条数，超过的部分只报个数。 */
+  const IMPORT_ERROR_LIMIT = 20
+
+  let importOpen = $state(false)
+  let importFile = $state<File | null>(null)
+  let importPassword = $state('')
+  let importReport = $state<ImportReport | null>(null)
+  let importError = $state<MessageKey | null>(null)
+  let importing = $state(false)
+
+  /**
+   * 两个按钮都能发出校验请求；「确认导入」只在「校验过、没有不合格行、且确实有可导行」时可点。
+   *
+   * 一行不合格就一行都不写，所以这里不是「跳过坏行」而是「全部退回」。
+   */
+  const importReady = $derived(
+    importReport !== null && importReport.errors.length === 0 && importReport.valid > 0,
+  )
+  const importShownErrors = $derived(importReport?.errors.slice(0, IMPORT_ERROR_LIMIT) ?? [])
+
+  function openImport() {
+    importFile = null
+    importPassword = ''
+    importReport = null
+    importError = null
+    importOpen = true
+  }
+
+  function pickImportFile(event: Event) {
+    importFile = (event.currentTarget as HTMLInputElement).files?.[0] ?? null
+    // 换了文件，上一次的校验结果就不再对应当前内容，先清掉
+    importReport = null
+    importError = null
+  }
+
+  /**
+   * 下载空模板。
+   *
+   * 在前端生成而不是从后端取：模板就是一行表头加一行示例，为它加一个接口意味着
+   * 多一条要么公开、要么再配权限码的路由，而公开端点是刻意限制的。
+   *
+   * BOM 不能少：缺了它用 Excel 打开 UTF-8 的 CSV 会把中文显示成乱码。
+   * 列名要和后端认得的列一致，改这里就得回头改 handler/user_handler.go。
+   */
+  function downloadTemplate() {
+    const csv =
+      '\ufeffusername,nickname,mobile,email,status\nzhangsan,张三,13800000000,zhangsan@example.com,active\n'
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'users-template.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  /**
+   * 上传并校验；dryRun 走 `?dry_run=1`，只查不写，报告与真导入同形。
+   *
+   * 密码随表单整批传一次，不写进 CSV：明文密码不该落在会被转发的文件里。
+   */
+  async function submitImport(dryRun: boolean) {
+    if (!importFile) return
+    importing = true
+    importError = null
+    try {
+      const body = new FormData()
+      body.append('password', importPassword)
+      body.append('file', importFile)
+      importReport = await api.upload<ImportReport>(`/users/import?dry_run=${dryRun ? 1 : 0}`, body)
+      if (!dryRun && importReport.imported > 0) {
+        notifySuccess('notify.imported', { count: importReport.imported })
+        importOpen = false
+        await load()
+      }
+    } catch (err) {
+      importReport = null
+      importError = errKey(err)
+    } finally {
+      importing = false
+    }
   }
 
   // ---- 新建 / 编辑 ----
@@ -376,9 +479,17 @@
 
   <div class="flex items-center justify-between">
     <p class="text-sm text-muted-foreground">{t('common.total', { total })}</p>
-    {#if session.can('system:user:add')}
-      <Button size="sm" onclick={openCreate}>{t('common.create')}</Button>
-    {/if}
+    <div class="flex items-center gap-2">
+      <Button data-testid="export-users" variant="outline" size="sm" href={exportHref}>
+        {t('common.export')}
+      </Button>
+      {#if session.can('system:user:add')}
+        <Button data-testid="import-open" variant="outline" size="sm" onclick={openImport}>
+          {t('common.import')}
+        </Button>
+        <Button size="sm" onclick={openCreate}>{t('common.create')}</Button>
+      {/if}
+    </div>
   </div>
 
   <div class="rounded-lg border bg-card">
@@ -595,6 +706,110 @@
         <Button type="submit" disabled={saving}>{t('common.save')}</Button>
       </DialogFooter>
     </form>
+  </DialogContent>
+</Dialog>
+
+<!-- 导入用户 -->
+<Dialog bind:open={importOpen}>
+  <DialogContent class="max-w-lg">
+    <DialogHeader>
+      <DialogTitle>{t('user.importTitle')}</DialogTitle>
+      <DialogDescription>{t('user.importHint')}</DialogDescription>
+    </DialogHeader>
+
+    <div class="grid gap-4">
+      <div class="grid gap-1.5">
+        <Label for="imp-password">{t('user.password')}</Label>
+        <Input
+          id="imp-password"
+          type="password"
+          required
+          minlength={8}
+          maxlength={72}
+          bind:value={importPassword}
+        />
+        <p class="text-xs text-muted-foreground">{t('user.importPasswordHint')}</p>
+      </div>
+
+      <div class="grid gap-1.5">
+        <div class="flex items-center justify-between">
+          <Label for="imp-file">{t('user.importFile')}</Label>
+          <Button type="button" variant="outline" size="sm" onclick={downloadTemplate}>
+            {t('user.importTemplate')}
+          </Button>
+        </div>
+        <input
+          id="imp-file"
+          data-testid="import-file"
+          type="file"
+          accept=".csv,text/csv"
+          class="cursor-pointer"
+          disabled={importing}
+          onchange={pickImportFile}
+        />
+      </div>
+
+      {#if importError}
+        <p data-testid="import-error" class="text-sm text-destructive">{t(importError)}</p>
+      {/if}
+
+      {#if importReport}
+        <div data-testid="import-report" class="grid gap-2 rounded-md border p-3 text-sm">
+          <p>
+            {t('user.importReport', {
+              total: importReport.total,
+              valid: importReport.valid,
+              imported: importReport.imported,
+            })}
+          </p>
+          {#if importReport.errors.length > 0}
+            <p class="text-destructive">
+              {t('user.importBlocked', { count: importReport.errors.length })}
+            </p>
+            <ul class="grid gap-1">
+              {#each importShownErrors as err}
+                <!-- 行号在前，因为修文件时先要找到那一行 -->
+                <li class="text-xs text-muted-foreground">
+                  {t('user.importRow', { row: err.row })}：{validationText(err)}
+                </li>
+              {/each}
+            </ul>
+            {#if importReport.errors.length > importShownErrors.length}
+              <p class="text-xs text-muted-foreground">
+                {t('user.importMoreErrors', {
+                  count: importReport.errors.length - importShownErrors.length,
+                })}
+              </p>
+            {/if}
+          {:else if importReport.valid > 0}
+            <p class="text-muted-foreground">{t('user.importReady')}</p>
+          {/if}
+        </div>
+      {/if}
+    </div>
+
+    <DialogFooter>
+      <Button type="button" variant="outline" onclick={() => (importOpen = false)}>
+        {t('common.cancel')}
+      </Button>
+      <Button
+        data-testid="import-check"
+        type="button"
+        variant="outline"
+        disabled={importing || !importFile || importPassword.length < 8}
+        onclick={() => submitImport(true)}
+      >
+        {t('user.importCheck')}
+      </Button>
+      <Button
+        data-testid="import-confirm"
+        type="button"
+        disabled={importing || !importReady}
+        onclick={() => submitImport(false)}
+      >
+        {t('user.importConfirm')}
+      </Button>
+    </DialogFooter>
   </DialogContent>
 </Dialog>
 

@@ -166,7 +166,7 @@ used).
 | Item | Notes |
 | --- | --- |
 | Tab persistence | Tabs live in memory; after a refresh only the one for the current path is restored |
-| List export | Users/roles/logs have no export entry point |
+| List export | Users (which also import) and operation logs export today; roles and login logs still do not |
 | Shared components | Tables, pagination and filter bars are written once per page for now — good enough, but they could be extracted |
 
 ### Built-in routes

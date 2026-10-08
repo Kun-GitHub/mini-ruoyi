@@ -117,6 +117,38 @@ func (r *UserRepository) Create(ctx context.Context, u domain.User) (domain.User
 	return u, nil
 }
 
+// CreateBatch 在单事务里插入一批用户，返回插入条数。
+//
+// 整批同事务是「一行不合格就一行都不写」的落地：分批提交的话，
+// 中途失败会留下一半数据，而列表里多了哪些用户没人说得清。
+// 密码哈希由调用方传入（整批共用一个），这里只管写。
+func (r *UserRepository) CreateBatch(ctx context.Context, users []domain.User) error {
+	if len(users) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck // Commit 成功后这里是空操作
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO sys_users (status, username, password, nickname, mobile, email)
+		VALUES (?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close() //nolint:errcheck // 事务提交后再关是正常的
+
+	for _, u := range users {
+		if _, err := stmt.ExecContext(ctx,
+			u.Status, u.Username, u.Password, u.Nickname, u.Mobile, u.Email); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // UpdateProfile 只改资料字段。username 不可变，password 走独立方法。
 func (r *UserRepository) UpdateProfile(ctx context.Context, u domain.User) error {
 	res, err := r.db.ExecContext(ctx, `

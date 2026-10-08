@@ -159,7 +159,7 @@ srv.Shutdown(15s)                    优雅关闭
 
 ### 4.1 路由清单
 
-当前 39 个端点：**1 公开 + 4 自助 + 34 受权限保护**（下表省略 `/api/v1` 前缀）。
+当前 42 个端点：**1 公开 + 4 自助 + 37 受权限保护**（下表省略 `/api/v1` 前缀）。
 
 | 分组 | 端点 |
 | --- | --- |
@@ -167,11 +167,11 @@ srv.Shutdown(15s)                    优雅关闭
 | 自助（`self`） | `GET /auth/me`、`POST /auth/logout`、`PUT /profile`、`PUT /profile/password` |
 | 菜单 | `GET /menus`、`GET /menus/:id`、`POST /menus`、`PUT /menus/:id`、`DELETE /menus/:id` |
 | 角色 | `GET /roles`、`GET /roles/:id`、`GET /roles/:id/grants`、`POST /roles`、`PUT /roles/:id`、`PUT /roles/:id/grants`、`DELETE /roles/:id` |
-| 用户 | `GET /users`、`GET /users/:id`、`POST /users`、`PUT /users/:id`、`PUT /users/:id/roles`、`PUT /users/:id/password`、`DELETE /users/:id` |
+| 用户 | `GET /users`、`GET /users/:id`、`POST /users`、`PUT /users/:id`、`PUT /users/:id/roles`、`PUT /users/:id/password`、`DELETE /users/:id`、`GET /users/export`、`POST /users/import` |
 | 权限清单 | `GET /perms` |
 | 文件 | `GET /files`、`GET /files/:id/download`、`POST /files`、`DELETE /files/:id` |
 | 任务 | `GET /jobs`、`PUT /jobs/:key`、`POST /jobs/:key/run`、`GET /jobs/:key/logs` |
-| 监控 | `GET /system`、`GET /sessions`、`DELETE /sessions/:hash`、`DELETE /users/:id/sessions`、`GET /login-logs`、`GET /oper-logs` |
+| 监控 | `GET /system`、`GET /sessions`、`DELETE /sessions/:hash`、`DELETE /users/:id/sessions`、`GET /login-logs`、`GET /oper-logs`、`GET /oper-logs/export` |
 
 读与写的权限码分开声明：「能看」等于「能改」是常见的授权漏洞，所以
 `GET /roles/:id/grants` 用 `list` 码而 `PUT /roles/:id/grants` 用 `edit` 码，
@@ -190,6 +190,31 @@ srv.Shutdown(15s)                    优雅关闭
 **不能信任 `X-Forwarded-For`。** 本服务直接对外监听，没有 nginx。若不调用
 `SetTrustedProxies(nil)`，gin 的 `ClientIP()` 会采信客户端自带的 `X-Forwarded-For`，
 限流可以被一行 header 绕过。测试用例 `TestRateLimitIgnoresSpoofedForwardedFor` 覆盖这一点。
+
+### 4.3 CSV 导入 / 导出
+
+三个接口：`GET /users/export`、`POST /users/import`、`GET /oper-logs/export`，底下共用 `internal/csvx`
+（零依赖，stdlib 的 `encoding/csv`）。几条不显眼但必须守住的约定：
+
+**导出必须和屏幕一致。** 筛选条件放在 `userFilter(c)` / `operLogFilter(c)` 里由列表与导出共用——
+两边各解析一次，迟早会出现「列表筛了角色、导出的却是全表」。导出用 `<a href>` 而不是 fetch + blob：
+下载是浏览器的行为，交给它处理进度与保存位置；fetch 方案多写一堆代码，还要把整份文件读进内存。
+
+**BOM 与公式注入。** 文件开头写 `\ufeff`，否则 Excel 打开 UTF-8 的 CSV 会把中文显示成乱码；
+首字符是 `=` `+` `-` `@` 的值前面加 `'`，否则 `=1+1` 这样的用户名会被 Excel 当公式执行。
+
+**超限报错，不截断。** 导出上限 10000 行、导入 500 行，超过直接报错——
+「导出了一个只有前一万行的文件」比报错更难发现。
+
+**导入是 all-or-nothing。** 一行不合格则一行都不写（`CreateBatch` 单事务）。
+逐行结果用 **200 + 报告**返回，而不是 4xx：报告要带行号与规则，只能放在 `data` 里，
+而失败信封只保留 `code` / `msg` / `errors`，前端 `client.ts` 的 `ApiError` 会丢弃 `data`。
+真 4xx 只剩四种：没收到文件、缺少必要的列、行数超限、CSV 本身坏了。
+
+**密码不进 CSV。** 密码由界面表单整批传一次，整批只做**一次** bcrypt——
+逐行哈希会让 500 行撞上 `cmd/server/main.go` 的 10 秒 `writeTimeout`（实测约 47ms/次，500 行约 23 秒）。
+
+**`?dry_run=1` 只查不写**，报告与真导入完全同形，用来先看一遍「哪几行不合格」。
 
 ## 5. 响应信封（`internal/httpx`）
 
@@ -355,7 +380,7 @@ cd server && go test ./...        # 全部
 go test ./... -run TestNewDB      # 单个
 ```
 
-当前 130 个用例，分布在 18 个测试文件里。`handler` / `job` / `auth` / `domain` / `cmd/server`
+当前 146 个用例，分布在 20 个测试文件里（`httpserver/fixture_test.go` 是夹具，不算用例）。`handler` / `job` / `auth` / `domain` / `cmd/server`
 没有独立测试文件——它们的正确性由 `httpserver` 的端到端用例覆盖（handler 的每个分支
 基本都对应一条 HTTP 断言）。
 
@@ -378,6 +403,8 @@ go test ./... -run TestNewDB      # 单个
 | `httpserver/monitor_test.go` | 会话列表与踢人、不能踢自己、**强退不存在的用户返回 404**、登录日志记录成败与来源、操作日志记录写操作与 403、**操作日志不含请求体** |
 | `service/job_log_test.go` | 每次执行（成功 / 失败 / 跳过）都留一条记录与触发方式、**两条写库是同一个事务**（第二条失败时 `last_run_at` 不跟着变）、日志按保留期清理且不误删新记录 |
 | `httpserver/job_logs_test.go` | 执行历史的三层授权（401 / 403 / `tool:job:list` 放行）、**触发一次后历史里真出现那一条**、未注册的 key 返回 404、页码越界钳到最后一页 |
+| `httpserver/users_csv_test.go` | **导入导出的完整行为**：导出跟着筛选走、行数超限报错不截断、干跑只查不写、一行不合格整批不写、文件内重复行报行号、导出的文件能原样导回、三个接口的授权（401 / 403） |
+| `csvx/csv_test.go` | BOM、公式注入转义、列数与表头不一致、超限不截断、空文件 |
 | `httpserver/fixture_test.go` | 不是用例，是被各测试复用的夹具（临时库 + 完整路由） |
 | `httpserver/router_test.go` 的 `TestPanicReturnsEnvelope` | **panic 也要返回信封**——空 body 的 500 会让前端把「后端出错」误判成「后端没起来」 |
 

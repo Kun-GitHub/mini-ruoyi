@@ -161,7 +161,7 @@ and a wrong one panics at startup).
 
 ### 4.1 Route list
 
-39 endpoints today: **1 public + 4 self-service + 34 permission-protected** (the `/api/v1` prefix is omitted below).
+42 endpoints today: **1 public + 4 self-service + 37 permission-protected** (the `/api/v1` prefix is omitted below).
 
 | Group | Endpoints |
 | --- | --- |
@@ -169,11 +169,11 @@ and a wrong one panics at startup).
 | Self-service (`self`) | `GET /auth/me`, `POST /auth/logout`, `PUT /profile`, `PUT /profile/password` |
 | Menus | `GET /menus`, `GET /menus/:id`, `POST /menus`, `PUT /menus/:id`, `DELETE /menus/:id` |
 | Roles | `GET /roles`, `GET /roles/:id`, `GET /roles/:id/grants`, `POST /roles`, `PUT /roles/:id`, `PUT /roles/:id/grants`, `DELETE /roles/:id` |
-| Users | `GET /users`, `GET /users/:id`, `POST /users`, `PUT /users/:id`, `PUT /users/:id/roles`, `PUT /users/:id/password`, `DELETE /users/:id` |
+| Users | `GET /users`, `GET /users/:id`, `POST /users`, `PUT /users/:id`, `PUT /users/:id/roles`, `PUT /users/:id/password`, `DELETE /users/:id`, `GET /users/export`, `POST /users/import` |
 | Permission list | `GET /perms` |
 | Files | `GET /files`, `GET /files/:id/download`, `POST /files`, `DELETE /files/:id` |
 | Jobs | `GET /jobs`, `PUT /jobs/:key`, `POST /jobs/:key/run`, `GET /jobs/:key/logs` |
-| Monitoring | `GET /system`, `GET /sessions`, `DELETE /sessions/:hash`, `DELETE /users/:id/sessions`, `GET /login-logs`, `GET /oper-logs` |
+| Monitoring | `GET /system`, `GET /sessions`, `DELETE /sessions/:hash`, `DELETE /users/:id/sessions`, `GET /login-logs`, `GET /oper-logs`, `GET /oper-logs/export` |
 
 Read and write permission codes are declared separately: "can view" implying "can modify" is a common authorization
 hole, so `GET /roles/:id/grants` uses the `list` code while `PUT /roles/:id/grants` uses the `edit` code, and
@@ -192,6 +192,35 @@ lazily, or a port scan grows it unbounded with every IP ever seen.
 **`X-Forwarded-For` must not be trusted.** This service listens publicly with no nginx in front. Without calling
 `SetTrustedProxies(nil)`, gin's `ClientIP()` honours a client-supplied `X-Forwarded-For` and the rate limit can be
 bypassed with one header line. `TestRateLimitIgnoresSpoofedForwardedFor` covers this.
+
+### 4.3 CSV import / export
+
+Three endpoints: `GET /users/export`, `POST /users/import`, `GET /oper-logs/export`, all sitting on `internal/csvx`
+(zero dependencies, the stdlib's `encoding/csv`). A few conventions that are easy to miss but must hold:
+
+**An export must match the screen.** The filters live in `userFilter(c)` / `operLogFilter(c)`, shared by the list and
+by the export — parse them twice and sooner or later the list is filtered by role while the export dumps the whole
+table. The export is an `<a href>`, not fetch + blob: downloading is the browser's job, so let it handle progress and
+the save location, while the fetch route costs more code and pulls the entire file into memory.
+
+**BOM and formula injection.** The file starts with `\ufeff` — without it Excel shows a UTF-8 CSV as mojibake. Any
+value starting with `=` `+` `-` `@` gets a leading `'`, or a username like `=1+1` is executed as a formula by Excel.
+
+**Over the limit is an error, never a truncation.** Export caps at 10000 rows, import at 500, and going over fails
+outright: "it exported a file with only the first ten thousand rows" is far harder to notice than an error.
+
+**Import is all-or-nothing.** One bad row and nothing is written (`CreateBatch` runs in a single transaction).
+Per-row results come back as **200 + a report** rather than 4xx: the report carries row numbers and rules, which only
+fit in `data`, while a failure envelope keeps just `code` / `msg` / `errors` and the frontend's `ApiError` in
+`client.ts` discards `data`. That leaves exactly four real 4xx cases: no file, missing columns, too many rows, and a
+broken CSV.
+
+**The password never enters the CSV.** It is sent once, by the dialog's form, for the whole batch — and the batch is
+hashed **once**. Hashing row by row would make 500 rows hit the 10-second `writeTimeout` in `cmd/server/main.go`
+(about 47 ms per hash in practice, so 500 rows would take roughly 23 seconds).
+
+**`?dry_run=1` validates without writing**, and its report has exactly the same shape as a real import, so you can
+see which rows fail before committing anything.
 
 ## 5. The response envelope (`internal/httpx`)
 
@@ -361,7 +390,7 @@ cd server && go test ./...        # everything
 go test ./... -run TestNewDB      # one test
 ```
 
-There are 130 cases across 18 test files today. `handler` / `job` / `auth` / `domain` / `cmd/server` have no test files of
+There are 146 cases across 20 test files today (`httpserver/fixture_test.go` is a fixture, not a case). `handler` / `job` / `auth` / `domain` / `cmd/server` have no test files of
 their own — their correctness is covered by the end-to-end cases in `httpserver` (essentially every branch of a handler
 maps to one HTTP assertion).
 
@@ -384,6 +413,8 @@ maps to one HTTP assertion).
 | `httpserver/monitor_test.go` | the session list and kicking, not being able to kick yourself, **404 when force-logging-out an unknown user**, login logs recording success and origin, operation logs recording writes and 403s, **operation logs containing no request bodies** |
 | `service/job_log_test.go` | every run (success / failure / skip) leaves a record with its trigger, **both writes share one transaction** (when the second fails, `last_run_at` does not move), logs are cleaned up by retention without touching fresh rows |
 | `httpserver/job_logs_test.go` | the three authorization layers on run history (401 / 403 / `tool:job:list` allows), **one trigger makes exactly one row appear**, an unregistered key returns 404, an out-of-range page is clamped to the last one |
+| `httpserver/users_csv_test.go` | **the full behaviour of import/export**: the export follows the filters, over-limit is an error rather than a truncation, a dry run writes nothing, one bad row blocks the whole batch, a duplicated row is reported with its row number, an exported file imports back unchanged, and the three endpoints' authorization (401 / 403) |
+| `csvx/csv_test.go` | BOM, formula-injection escaping, a row whose column count does not match the header, over-limit without truncation, an empty file |
 | `httpserver/fixture_test.go` | not a test case but the fixture the other tests reuse (a temporary database plus the full router) |
 | `TestPanicReturnsEnvelope` in `httpserver/router_test.go` | **a panic still returns the envelope** — a 500 with an empty body makes the frontend mistake "the backend errored" for "the backend is not up" |
 

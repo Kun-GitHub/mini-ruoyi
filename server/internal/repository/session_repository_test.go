@@ -50,7 +50,9 @@ func adminID(t *testing.T, users *UserRepository, ctx context.Context) int64 {
 func TestSessionTimesUseCanonicalFormat(t *testing.T) {
 	sessions, users, ctx := newSessionRepo(t)
 
-	expires := time.Date(2026, 10, 4, 16, 44, 22, 0, time.UTC)
+	// 过期时间按「现在往后一小时」推算，不写死日期：写死的日期一旦过去，
+	// 末尾那条「created_at <= expires_at」会与时间格式无关地开始失败。
+	expires := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
 	if err := sessions.Create(ctx, domain.Session{
 		TokenHash: "hash-format", UserID: adminID(t, users, ctx),
 		ExpiresAt: expires, CSRFToken: "csrf",

@@ -154,6 +154,11 @@ func NewRouter(deps Deps) (*gin.Engine, *RouteTable, error) {
 	// 重设密码单独授权：它能让持有者冒充任意用户，比「改资料」危险得多
 	reg.protect(http.MethodPut, "/users/:id/password", perm.SystemUserResetPwd, deps.User.ResetPassword)
 	reg.protect(http.MethodDelete, "/users/:id", perm.SystemUserDelete, deps.User.Delete)
+	// 导入复用「新增用户」的权限码：它做的事就是批量建号，多一个码只会
+	// 多一个可以配错的开关——能导入却不能建号毫无意义，反之亦然。
+	// 导出复用 list：能看到列表就能导出列表，导出的只是同一份数据的另一种格式。
+	reg.protect(http.MethodGet, "/users/export", perm.SystemUserList, deps.User.Export)
+	reg.protect(http.MethodPost, "/users/import", perm.SystemUserAdd, deps.User.Import)
 
 	// ---- 系统工具 ----
 	// 任务清单以**代码注册表**为准（数据库里可能残留已删除任务），所以没有新增/删除接口。
@@ -181,6 +186,8 @@ func NewRouter(deps Deps) (*gin.Engine, *RouteTable, error) {
 
 	reg.protect(http.MethodGet, "/login-logs", perm.MonitorLoginLogList, deps.Log.ListLoginLogs)
 	reg.protect(http.MethodGet, "/oper-logs", perm.MonitorOperLogList, deps.Log.ListOperLogs)
+	// 日志导出同样复用 list 权限，理由同上：导出的就是列表里那些行
+	reg.protect(http.MethodGet, "/oper-logs/export", perm.MonitorOperLogList, deps.Log.ExportOperLogs)
 
 	if err := MountStatic(r, deps.WebDir); err != nil {
 		return nil, nil, err

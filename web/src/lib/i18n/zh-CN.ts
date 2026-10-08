@@ -38,6 +38,12 @@ export const zhCN = {
   'error.csrfInvalid': '请求校验失败，请刷新页面后重试',
   'error.duplicate': '该值已存在',
   'error.invalidPermCode': '包含未知的权限码',
+  // 导入导出：文件本身有问题时走这些键。逐行错误不走这里——它随 200 的
+  // data.errors 返回（前端 client.ts 的 ApiError 会丢弃 data，装进失败响应就丢了）
+  'error.importNoFile': '没有收到文件，请选择要导入的 CSV',
+  'error.importTooManyRows': '文件行数超过单次导入上限，请拆成多个文件',
+  'error.importMissingColumns': '文件缺少必要的列，请先下载模板对照列名',
+  'error.exportTooManyRows': '导出行数超过上限，请先缩小筛选范围',
 
   'validation.required': '{field}不能为空',
   'validation.min': '{field}长度不能少于 {param} 个字符',
@@ -46,6 +52,7 @@ export const zhCN = {
   'validation.oneof': '{field}只能是 {param} 之一',
   'validation.default': '{field}不满足 {rule} 规则',
   'validation.unique': '{field}已存在',
+  'validation.duplicateRow': '{field}与文件中第 {param} 行重复',
   'validation.startswith': '{field}必须以 {param} 开头',
 
   'field.name': '名称',
@@ -93,6 +100,9 @@ export const zhCN = {
   'common.delete': '删除',
   'common.edit': '编辑',
   'common.create': '新增',
+  // 导入/导出是列表页上的动词，和「新增/删除」同级
+  'common.import': '导入',
+  'common.export': '导出',
   'common.save': '保存',
   'common.search': '查询',
   'common.reset': '重置',
@@ -157,11 +167,24 @@ export const zhCN = {
   'user.usernameImmutable': '用户名是身份标识，创建后不可修改。',
   'user.resetPassword': '重置密码',
   'user.resetPasswordHint': '重置后该用户的全部登录会话会立即失效。',
+  'user.importTitle': '导入用户',
+  'user.importHint': 'CSV 文件，单次最多 500 行。列名：username、nickname、mobile、email、status；多余的列忽略，只写 username 也能导。',
+  'user.importPasswordHint': '这一批用户共用下面的初始密码。密码不写进 CSV——明文密码不该留在文件里；导入后请通知用户自行修改。',
+  'user.importTemplate': '下载模板',
+  'user.importFile': 'CSV 文件',
+  'user.importCheck': '校验',
+  'user.importConfirm': '确认导入',
+  'user.importReport': '共 {total} 行，可用 {valid} 行，已导入 {imported} 行',
+  'user.importReady': '校验通过，可以导入',
+  'user.importBlocked': '有 {count} 行不合格。一行不合格就一行都不会导入，请修正后重新校验。',
+  'user.importMoreErrors': '另有 {count} 条未显示',
+  'user.importRow': '第 {row} 行',
 
   'notify.kicked': '已强制下线',
   'notify.saved': '已保存',
   'notify.deleted': '已删除',
   'notify.passwordReset': '密码已重置，该用户的登录会话已全部失效',
+  'notify.imported': '已导入 {count} 个用户',
 
   'role.title': '角色管理',
   'role.code': '角色编码',

@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -92,11 +93,20 @@ func TestEveryProtectedEndpointHasADeclaredPerm(t *testing.T) {
 
 // TestUnauthenticatedRequestsAreRejected 确认受保护端点在没有会话时一律 401，
 // 而不是「没权限就放行」。
+//
+// 每个请求都换一个来源 IP：按 IP 限流是刻意行为（默认 20 rps / burst 40），
+// 而这里会把**全部**受保护端点请求一遍，端点数量超过 burst 之后，后面的请求
+// 会先撞上限流拿到 429，用例于是红得毫无道理。放宽限流或用例里关掉它都不对：
+// 前者动了生产参数，后者让这条边界不再被验证。
 func TestUnauthenticatedRequestsAreRejected(t *testing.T) {
 	r, table := newTestRouter(t)
 
-	for _, route := range append(append([]Route{}, table.Self...), table.Protected...) {
-		w := send(t, r, route.Method, route.Path, "")
+	for i, route := range append(append([]Route{}, table.Self...), table.Protected...) {
+		req := httptest.NewRequest(route.Method, route.Path, nil)
+		req.RemoteAddr = fmt.Sprintf("10.%d.%d.1:1234", i/256, i%256)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
 		if w.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s 未登录时返回 %d，期望 401", route.Method, route.Path, w.Code)
 		}

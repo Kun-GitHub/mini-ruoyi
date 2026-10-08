@@ -90,6 +90,21 @@
   }
 
   const totalPages = $derived(Math.max(1, Math.ceil(total / PAGE_SIZE)))
+
+  /**
+   * 导出链接用 Button 的 href 分支（渲染成 `<a>`）而不是按钮 + onclick。
+   *
+   * 导出是浏览器的下载行为：交给它自己处理进度与保存位置。
+   * 筛选条件必须带上——导出的应该是屏幕上看到的那些行，不是全表。
+   */
+  const exportHref = $derived.by(() => {
+    const q = new URLSearchParams()
+    for (const key of ['username', 'method', 'path', 'start', 'end'] as const) {
+      if (filters[key]) q.set(key, filters[key])
+    }
+    const qs = q.toString()
+    return `/api/v1/oper-logs/export${qs ? `?${qs}` : ''}`
+  })
 </script>
 
 <div class="flex flex-col gap-4">
@@ -136,7 +151,12 @@
     </div>
   </div>
 
-  <p class="text-sm text-muted-foreground">{t('common.total', { total })}</p>
+  <div class="flex items-center justify-between">
+    <p class="text-sm text-muted-foreground">{t('common.total', { total })}</p>
+    <Button data-testid="export-oper-logs" variant="outline" size="sm" href={exportHref}>
+      {t('common.export')}
+    </Button>
+  </div>
 
   <div class="rounded-lg border bg-card">
     <Table>

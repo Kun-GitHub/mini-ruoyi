@@ -83,7 +83,7 @@ cp config/config.example.yaml config/config.yaml   # 可选，不改也能跑
 启动时会打印当前端点分类：
 
 ```
-已注册 39 个 API 端点（公开 1 / 仅登录 4 / 需权限 34）
+已注册 42 个 API 端点（公开 1 / 仅登录 4 / 需权限 37）
 ```
 
 **认证方式**：登录后服务端下发 `mr_session` cookie（HttpOnly / SameSite=Lax）。
@@ -119,12 +119,15 @@ cp config/config.example.yaml config/config.yaml   # 可选，不改也能跑
 | PUT | `/users/:id/roles` | `system:user:edit` | |
 | PUT | `/users/:id/password` | `system:user:resetPwd` | 重置后**立即踢掉该用户全部会话** |
 | DELETE | `/users/:id` | `system:user:delete` | |
+| GET | `/users/export` | `system:user:list` | 按当前筛选导出 CSV；超过 10000 行报错，不静默截断 |
+| POST | `/users/import` | `system:user:add` | 导入 CSV（multipart：`file` + `password`）；一行不合格则整批不写，`?dry_run=1` 只校验 |
 | GET | `/system` | `monitor:system:list` | 本机 CPU / 内存 / 磁盘 / Go 进程状态 |
 | GET | `/sessions` | `monitor:session:list` | 在线会话（未过期的），最近活跃在前 |
 | DELETE | `/sessions/:hash` | `monitor:session:kick` | 踢掉一条会话，对方下次请求即失效 |
 | DELETE | `/users/:id/sessions` | `monitor:session:kick` | 强退某用户全部会话 |
 | GET | `/login-logs` | `monitor:loginlog:list` | 登录日志，支持 `username` / `status` / `start` / `end` 筛选 |
 | GET | `/oper-logs` | `monitor:operlog:list` | 操作日志，支持 `username` / `method` / `path` / `start` / `end` 筛选 |
+| GET | `/oper-logs/export` | `monitor:operlog:list` | 按当前筛选导出 CSV（比列表多一列 `user_agent`） |
 | GET | `/files` | `tool:file:list` | 文件列表，响应还带容量用量 |
 | GET | `/files/:id/download` | `tool:file:list` | 下载。**强制保存**，不做内联预览 |
 | POST | `/files` | `tool:file:upload` | multipart 上传，字段名 `file`，可带 `group` |
@@ -295,7 +298,7 @@ internal/httpserver/               路由装配、静态资源托管 + SPA 兜�
 ## 尚未实现
 
 - **登录失败锁定**：现在只记登录日志，不累计失败次数、不锁账号
-- **列表导出**：用户/角色/日志都没有导出接口
+- **列表导出**：用户与操作日志已有导出（用户还支持 CSV 导入），角色与登录日志还没有
 
 `devices` 示例资源已移除：在 fail-closed 的权限模型下，它要么污染生产权限清单，
 要么留下一个无权限的 CRUD 接口，两者都不该出现在正式版本里。

@@ -260,7 +260,7 @@ before committing. (It needs the `sqlite3` CLI; running the project itself does 
 **Implemented**: the layered skeleton, the unified response contract, SQLite connection and migrations, static asset
 hosting, per-IP rate limiting, the frontend toolchain and i18n.
 
-**Backend complete**: authentication (session + CSRF), RBAC authorization (34 permission-protected endpoints, with
+**Backend complete**: authentication (session + CSRF), RBAC authorization (37 permission-protected endpoints, with
 permission codes declared in code and validated at startup), full CRUD for users / roles / menus / permission codes,
 delete confirmation and guards, and versioned migrations.
 The table definitions are in [docs/schema.en.md](docs/schema.en.md) and the endpoints in [server/README.en.md](server/README.en.md).
@@ -269,10 +269,13 @@ It also includes **system monitoring** (force-logout of online sessions, login l
 (file management, scheduled jobs). Log retention defaults to 30 days and is configurable; uploads are capped both
 per file and in total.
 
+Lists support **CSV export** (users, operation logs) and **CSV import** (users, all-or-nothing: one bad row and
+nothing is written).
+
 **Not implemented yet**:
 
 - **State persistence** for multiple tabs (a refresh keeps only the current tab)
-- List export (CSV / Excel)
+- Export for roles and login logs
 - Login failure lockout
 
 See the to-do list in [docs/architecture.en.md](docs/architecture.en.md).
