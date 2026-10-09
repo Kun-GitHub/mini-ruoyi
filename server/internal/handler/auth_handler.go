@@ -60,8 +60,10 @@ type sessionPayload struct {
 	Menus     []*domain.MenuNode `json:"menus"`
 }
 
-// Password 用 max=72 而不是更长：bcrypt 对超过 72 字节的输入直接报错，
-// 不在这里挡住的话用户会拿到 500 而不是「密码太长」。
+// Password 用 max=72 而不是更长：bcrypt 对超过 72 **字节** 的输入直接报错。
+//
+// 这里数的是字符（非 ASCII 的长密码拦不住），但登录只做比对、失败就是 401，
+// 不会 500；真正要兜的是哈希路径，见 auth.HashPassword。
 type loginRequest struct {
 	Username string `json:"username" binding:"required,max=128"`
 	Password string `json:"password" binding:"required,max=72"`

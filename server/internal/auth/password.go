@@ -1,18 +1,31 @@
 // Package auth 负责密码校验与会话管理。
 package auth
 
-import "golang.org/x/crypto/bcrypt"
+import (
+	"errors"
+
+	"golang.org/x/crypto/bcrypt"
+
+	"mini-ruoyi/internal/domain"
+)
 
 // MaxPasswordBytes 是 bcrypt 的上限。
 //
-// bcrypt 对超过 72 字节的密码直接返回错误，不会截断。所以请求校验必须带
-// binding:"max=72"，否则用户填一个长密码会拿到 500 而不是「密码太长」。
+// bcrypt 对超过 72 **字节** 的密码直接报错，不会截断。但请求校验里的
+// binding:"max=72" 数的是**字符**（rune），前端 maxlength 数的是 UTF-16 码元，
+// 两者都拦不住非 ASCII 的长密码——25 个汉字是 25 个字符、75 个字节。
+//
+// 所以 HashPassword 会把 bcrypt 的这个错误换成 domain.ErrPasswordTooLong，
+// 让建号、重置密码、改自己密码、批量导入四条路径统一回 400，而不是 500。
 const MaxPasswordBytes = 72
 
 // HashPassword 生成 bcrypt 哈希（60 字符）。
 func HashPassword(plain string) (string, error) {
 	b, err := bcrypt.GenerateFromPassword([]byte(plain), bcrypt.DefaultCost)
 	if err != nil {
+		if errors.Is(err, bcrypt.ErrPasswordTooLong) {
+			return "", domain.ErrPasswordTooLong
+		}
 		return "", err
 	}
 	return string(b), nil

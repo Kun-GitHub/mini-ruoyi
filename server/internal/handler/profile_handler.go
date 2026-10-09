@@ -50,7 +50,8 @@ func (h *ProfileHandler) Update(c *gin.Context) {
 }
 
 type changePasswordRequest struct {
-	// max=72 是 bcrypt 的上限，见 auth.MaxPasswordBytes
+	// max=72 是 bcrypt 的字节上限，这里按字符粗筛（非 ASCII 的长密码
+	// 由 auth.HashPassword 兜住），见 auth.MaxPasswordBytes
 	OldPassword string `json:"old_password" binding:"required,max=72"`
 	NewPassword string `json:"new_password" binding:"required,min=8,max=72"`
 }

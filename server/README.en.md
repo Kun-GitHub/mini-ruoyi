@@ -211,7 +211,7 @@ On a failing response `msg` is an **i18n key**, not text; the frontend renders t
 | 403 | `error.forbidden` / `error.protected` / `error.accountDisabled` / `error.cannotDeleteSelf` / `error.cannotKickSelf` / `error.csrfInvalid` |
 | 404 | `error.notFound` |
 | 409 | `error.hasDependents` / `error.lastAdmin` / `error.duplicate` |
-| 400 | `error.invalidJobCron` / `error.invalidFile` / `error.wrongOldPassword` |
+| 400 | `error.invalidJobCron` / `error.invalidFile` / `error.wrongOldPassword` / `error.passwordTooLong` / `error.importNoFile` / `error.importMissingColumns` / `error.importTooManyRows` / `error.exportTooManyRows` |
 | 413 | `error.bodyTooLarge` / `error.fileTooLarge` / `error.quotaExceeded` |
 | 429 | `error.tooManyRequests` |
 | 500 | `error.internal` |

@@ -63,6 +63,11 @@ const (
 	KeyInvalidJobCron = "error.invalidJobCron"
 	// KeyWrongOldPassword 修改自己密码时旧密码不对。
 	KeyWrongOldPassword = "error.wrongOldPassword"
+	// KeyPasswordTooLong 密码超过 bcrypt 的 72 **字节** 上限。
+	//
+	// 校验层的 max=72 与前端 maxlength 数的都是字符，所以 25 个汉字这类
+	// 「字符数够、字节数超」的密码只能在这里被拒。
+	KeyPasswordTooLong = "error.passwordTooLong"
 	// 上传相关的容量限制。
 	KeyFileTooLarge    = "error.fileTooLarge"
 	KeyQuotaExceeded   = "error.quotaExceeded"
@@ -208,6 +213,7 @@ var errorMapping = []struct {
 	{domain.ErrInvalidPermCode, http.StatusBadRequest, KeyInvalidPermCode},
 	{domain.ErrInvalidJobCron, http.StatusBadRequest, KeyInvalidJobCron},
 	{domain.ErrWrongOldPassword, http.StatusBadRequest, KeyWrongOldPassword},
+	{domain.ErrPasswordTooLong, http.StatusBadRequest, KeyPasswordTooLong},
 	// 上传超限用 413：和「请求体过大」同类，客户端据此提示「文件太大」
 	{domain.ErrFileTooLarge, http.StatusRequestEntityTooLarge, KeyFileTooLarge},
 	{domain.ErrQuotaExceeded, http.StatusRequestEntityTooLarge, KeyQuotaExceeded},

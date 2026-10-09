@@ -46,6 +46,12 @@ var (
 	// 与「重置他人密码」不同：那条路不需要旧密码，所以也不会出现这个错误。
 	ErrWrongOldPassword = errors.New("wrong old password")
 
+	// ErrPasswordTooLong 新密码超过 bcrypt 的 72 字节上限，映射成 400。
+	//
+	// 请求校验里的 max=72 是按**字符**（rune）数的，非 ASCII 密码过得了校验、
+	// 过不了 bcrypt：25 个汉字是 25 个字符、75 个字节。所以只能在这里兜住。
+	ErrPasswordTooLong = errors.New("password too long")
+
 	// ErrFileTooLarge 单个文件超过上限，映射成 413。
 	ErrFileTooLarge = errors.New("file too large")
 	// ErrQuotaExceeded 总容量超过配额，映射成 413。

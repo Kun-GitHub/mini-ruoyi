@@ -335,6 +335,7 @@ export const zhCN = {
   'profile.noPermissionHint': '这里改的是你自己的账号，不需要管理权限。',
   'error.invalidDate': '日期格式不正确，应为 2026-09-30',
   'error.wrongOldPassword': '当前密码不正确',
+  'error.passwordTooLong': '密码过长，请控制在 72 字节以内（约 24 个汉字）',
 
   // ---- 服务监控 ----
   'menu.monitor.system': '服务监控',

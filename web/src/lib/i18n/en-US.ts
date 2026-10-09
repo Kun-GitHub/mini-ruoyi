@@ -331,6 +331,7 @@ export const enUS: Record<keyof typeof zhCN, string> = {
   'profile.noPermissionHint': 'This changes your own account and needs no admin permission.',
   'error.invalidDate': 'Invalid date; expected the form 2026-09-30',
   'error.wrongOldPassword': 'Current password is incorrect',
+  'error.passwordTooLong': 'Password is too long — keep it within 72 bytes (about 24 Chinese characters)',
 
   // ---- System monitor ----
   'menu.monitor.system': 'System monitor',

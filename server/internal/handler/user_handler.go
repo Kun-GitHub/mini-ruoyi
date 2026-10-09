@@ -34,7 +34,8 @@ func NewUserHandler(svc *service.UserService) *UserHandler {
 // 所以改了 CHECK 约束就要同时搜一遍 oneof= 来对齐。
 type createUserRequest struct {
 	Username string `json:"username" binding:"required,min=2,max=128"`
-	// max=72 是 bcrypt 的上限，见 auth.MaxPasswordBytes
+	// max=72 是 bcrypt 的字节上限，这里按字符粗筛（非 ASCII 的长密码
+	// 由 auth.HashPassword 兜住），见 auth.MaxPasswordBytes
 	Password string `json:"password" binding:"required,min=8,max=72"`
 	Nickname string `json:"nickname" binding:"max=128"`
 	Mobile   string `json:"mobile" binding:"max=20"`
@@ -232,7 +233,7 @@ var userImportRequired = []string{"username"}
 // 密码**不进 CSV**：明文凭据不该落在一份会被转发、会被留档的文件里。
 // 它在界面表单里单独传，整批共用一个——服务端因此只需要哈希一次。
 type importUsersRequest struct {
-	// max=72 是 bcrypt 的上限，与 createUserRequest / resetPasswordRequest 一致
+	// max=72 同上：字节上限按字符粗筛，超出部分由 auth.HashPassword 兜住
 	Password string `form:"password" json:"password" binding:"required,min=8,max=72"`
 }
 
@@ -350,11 +351,9 @@ func (h *UserHandler) Import(c *gin.Context) {
 	}
 
 	errs := append(rowErrs, res.Errors...)
-	sort.Slice(errs, func(i, j int) bool { return errs[i].Row < errs[j].Row })
-	if errs == nil {
-		// 序列化成 [] 而不是 null：前端读 report.errors.length，null 会直接抛错
-		errs = []service.ImportRowError{}
-	}
+	// rowErrs 用 make 初始化、append 只会加不会减，所以 errs 恒非 nil，
+	// 序列化成 [] 而不是 null（前端读 report.errors.length，null 会直接抛错）。
+	sort.SliceStable(errs, func(i, j int) bool { return errs[i].Row < errs[j].Row })
 	httpx.Success(c, importReport{
 		Total:    len(rows),
 		Valid:    len(rows) - rowsWithErrors(errs),
@@ -411,17 +410,20 @@ func userFilter(c *gin.Context) (repository.UserFilter, error) {
 	}, nil
 }
 
-// cell 按列名取一行里的单元格。
+// cell 按列名取一行里的单元格，并撤掉导出时加的公式注入转义。
 //
 // 只有 userImportRequired 里的列被保证存在，其余列都可以缺，缺了就是空串。
 // 这里不查下标越界：csvx.Read 用 encoding/csv 的默认 FieldsPerRecord，
 // 每行列数必须与表头一致，否则整份文件会被拒。
+//
+// Unescape 放在这里而不是各调用点：这是「文件里的值 → 库里的值」的唯一通道，
+// 落一格不剥就静默多出一个引号。
 func cell(rec []string, cols map[string]int, name string) string {
 	i, ok := cols[name]
 	if !ok {
 		return ""
 	}
-	return rec[i]
+	return csvx.Unescape(rec[i])
 }
 
 // optionalID 解析一个可选的查询参数 ID。空串返回 0，表示不筛。

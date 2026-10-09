@@ -109,6 +109,7 @@ json.Marshal(Response{Msg: "ok", Data: x})   // 忘了设 Code
 | 服务不可用 | 503 | `error.serviceUnavailable` |
 | 服务器内部错误 | 500 | `error.internal` |
 | 旧密码不正确 | 400 | `error.wrongOldPassword` |
+| 密码超过 bcrypt 的 72 字节上限 | 400 | `error.passwordTooLong` |
 | 上传的文件本身不合法（如空文件） | 400 | `error.invalidFile` |
 | cron 表达式无法解析 | 400 | `error.invalidJobCron` |
 | 不能踢掉自己当前这条会话 | 403 | `error.cannotKickSelf` |
@@ -427,6 +428,9 @@ error.cannotKickSelf        error.frontendDisabled
 error.invalidJobCron        error.fileTooLarge
 error.quotaExceeded         error.invalidFile
 error.wrongOldPassword      error.invalidDate
+error.passwordTooLong       error.importNoFile
+error.importMissingColumns  error.importTooManyRows
+error.exportTooManyRows
 # 以下两个仅由前端产生（web/src/lib/api/client.ts），后端不会返回：
 error.network               # fetch 抛异常：没有任何东西应答
 error.backendUnreachable    # 有响应但不是信封：请求被代理拦下，或后端没启动

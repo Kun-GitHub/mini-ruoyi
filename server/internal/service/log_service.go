@@ -173,6 +173,25 @@ func (s *LogService) run() {
 	logins := make([]domain.LoginLog, 0, logBatchSize)
 	opers := make([]domain.OperLog, 0, logBatchSize)
 
+	// drain 把两个通道里排队的都收进本地批。
+	//
+	// 两个 case 交替取，直到都为空——只 drain 一个通道会丢掉另一种日志。
+	drain := func() {
+		for {
+			select {
+			case l := <-s.loginCh:
+				logins = append(logins, l)
+				continue
+			case o := <-s.operCh:
+				opers = append(opers, o)
+				continue
+			default:
+			}
+			break
+		}
+	}
+
+	// flush 写盘。
 	flush := func() {
 		if len(logins) > 0 {
 			writeBatch("登录日志", logins, s.repo.InsertLoginLogs)
@@ -199,25 +218,16 @@ func (s *LogService) run() {
 				opers = opers[:0]
 			}
 		case ack := <-s.flushReq:
+			// 先把通道里排队的收进本地批再写。select 在多个 case 都就绪时是**随机**挑的，
+			// 所以「刚记完一条日志」和「要求刷盘」同时就绪时，可能先刷后收：
+			// 那条日志留在通道里，Flush 返回了却没落库——而 Flush 的契约是「立即落库并等完成」。
+			drain()
 			flush()
 			close(ack)
 		case <-ticker.C:
 			flush()
 		case <-s.done:
-			// 关闭前把两个通道里排队的都收干净。两个 case 交替取，
-			// 直到都为空——只 drain 一个通道会丢掉另一种日志。
-			for {
-				select {
-				case l := <-s.loginCh:
-					logins = append(logins, l)
-					continue
-				case o := <-s.operCh:
-					opers = append(opers, o)
-					continue
-				default:
-				}
-				break
-			}
+			drain()
 			flush()
 			return
 		}

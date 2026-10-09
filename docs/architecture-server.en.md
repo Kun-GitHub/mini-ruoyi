@@ -205,6 +205,9 @@ the save location, while the fetch route costs more code and pulls the entire fi
 
 **BOM and formula injection.** The file starts with `\ufeff` — without it Excel shows a UTF-8 CSV as mojibake. Any
 value starting with `=` `+` `-` `@` gets a leading `'`, or a username like `=1+1` is executed as a formula by Excel.
+Import strips that back off by the same shape (`csvx.Unescape`, which only undoes what `Escape` writes) — otherwise
+"export → edit in Excel → import back" would permanently change values: the phone number `+8613800000000` exports
+as `'+8613800000000`, and that extra quote would stay in the database on the way back in.
 
 **Over the limit is an error, never a truncation.** Export caps at 10000 rows, import at 500, and going over fails
 outright: "it exported a file with only the first ten thousand rows" is far harder to notice than an error.
@@ -212,12 +215,13 @@ outright: "it exported a file with only the first ten thousand rows" is far hard
 **Import is all-or-nothing.** One bad row and nothing is written (`CreateBatch` runs in a single transaction).
 Per-row results come back as **200 + a report** rather than 4xx: the report carries row numbers and rules, which only
 fit in `data`, while a failure envelope keeps just `code` / `msg` / `errors` and the frontend's `ApiError` in
-`client.ts` discards `data`. That leaves exactly four real 4xx cases: no file, missing columns, too many rows, and a
-broken CSV.
+`client.ts` discards `data`. That leaves exactly five real 4xx cases: no file, missing columns, too many rows, a
+broken CSV, and an unacceptable password (too short, or over 72 bytes).
 
 **The password never enters the CSV.** It is sent once, by the dialog's form, for the whole batch — and the batch is
 hashed **once**. Hashing row by row would make 500 rows hit the 10-second `writeTimeout` in `cmd/server/main.go`
-(about 47 ms per hash in practice, so 500 rows would take roughly 23 seconds).
+(about 47 ms per hash in practice, so 500 rows would take roughly 23 seconds). Hashing comes last, so `dry_run=1`
+cannot catch "password too long" (a dry run never hashes) — that 400 only shows up on confirm.
 
 **`?dry_run=1` validates without writing**, and its report has exactly the same shape as a real import, so you can
 see which rows fail before committing anything.
@@ -390,7 +394,7 @@ cd server && go test ./...        # everything
 go test ./... -run TestNewDB      # one test
 ```
 
-There are 146 cases across 20 test files today (`httpserver/fixture_test.go` is a fixture, not a case). `handler` / `job` / `auth` / `domain` / `cmd/server` have no test files of
+There are 151 cases across 21 test files today (`httpserver/fixture_test.go` is a fixture, not a case). `handler` / `job` / `auth` / `domain` / `cmd/server` have no test files of
 their own — their correctness is covered by the end-to-end cases in `httpserver` (essentially every branch of a handler
 maps to one HTTP assertion).
 
@@ -407,14 +411,15 @@ maps to one HTTP assertion).
 | `config/config_test.go` | defaults without a config file, partial file overrides, environment overriding the file, unknown fields rejected, invalid values rejected, the candidate order of `web.dir` |
 | `httpserver/static_test.go` | SPA fallback, cache headers, API 404s returning JSON, startup failing on an incomplete directory |
 | `httpserver/router_test.go` | **fail-closed assertions on the public endpoint set**, **detection of missing assembly**, 401 for everything unauthenticated, the full login/logout path, a disabled user losing access immediately, the response envelope, error keys, the field-level validation array, 413/404 mapping |
-| `httpserver/rbac_api_test.go` | permission isolation (holding the code passes, missing it gives 403), grants taking effect per code, unknown permission codes rejected, the 409 impact and cascade confirmation, the four delete guards, unique conflicts carrying the field name, resetting a password kicking sessions |
+| `httpserver/rbac_api_test.go` | permission isolation (holding the code passes, missing it gives 403), grants taking effect per code, unknown permission codes rejected, the 409 impact and cascade confirmation, the four delete guards, unique conflicts carrying the field name, resetting a password kicking sessions, an over-72-byte non-ASCII password returning 400 rather than 500 |
 | `middleware/middleware_test.go` | rate limiting per IP, spoofed `X-Forwarded-For` being ignored, the request body cap, cache headers matching the prefix only |
 | `system/system_test.go` | parsing `/proc/stat` / `meminfo` / `statm` / `loadavg` (using real samples), `guest` not counted twice, units and the unavailable flag, non-Linux platforms reporting unavailability |
 | `httpserver/monitor_test.go` | the session list and kicking, not being able to kick yourself, **404 when force-logging-out an unknown user**, login logs recording success and origin, operation logs recording writes and 403s, **operation logs containing no request bodies** |
 | `service/job_log_test.go` | every run (success / failure / skip) leaves a record with its trigger, **both writes share one transaction** (when the second fails, `last_run_at` does not move), logs are cleaned up by retention without touching fresh rows |
+| `service/log_service_test.go` | **when `Flush` returns, everything recorded before the call is in the database** — with a queued row and a flush request both ready, `select` can flush before it collects, dropping that row for a round |
 | `httpserver/job_logs_test.go` | the three authorization layers on run history (401 / 403 / `tool:job:list` allows), **one trigger makes exactly one row appear**, an unregistered key returns 404, an out-of-range page is clamped to the last one |
-| `httpserver/users_csv_test.go` | **the full behaviour of import/export**: the export follows the filters, over-limit is an error rather than a truncation, a dry run writes nothing, one bad row blocks the whole batch, a duplicated row is reported with its row number, an exported file imports back unchanged, and the three endpoints' authorization (401 / 403) |
-| `csvx/csv_test.go` | BOM, formula-injection escaping, a row whose column count does not match the header, over-limit without truncation, an empty file |
+| `httpserver/users_csv_test.go` | **the full behaviour of import/export**: the export follows the filters, over-limit is an error rather than a truncation, a dry run writes nothing, one bad row blocks the whole batch, a duplicated row is reported with its row number, an exported file imports back unchanged (values included), a password over 72 bytes gets a 400, and the three endpoints' authorization (401 / 403) |
+| `csvx/csv_test.go` | BOM, formula-injection escaping and its inverse (`Unescape(Escape(x)) == x`), a row whose column count does not match the header, over-limit without truncation, an empty file |
 | `httpserver/fixture_test.go` | not a test case but the fixture the other tests reuse (a temporary database plus the full router) |
 | `TestPanicReturnsEnvelope` in `httpserver/router_test.go` | **a panic still returns the envelope** — a 500 with an empty body makes the frontend mistake "the backend errored" for "the backend is not up" |
 

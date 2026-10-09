@@ -66,14 +66,44 @@ func (w *Writer) Err() error { return w.w.Error() }
 // 处理方式取最小干预：前面加一个单引号——Excel 视其为「这是文本」的转义符，
 // 不显示出来，其他编辑器只是多看到一个引号，不破坏内容。
 func Escape(cell string) string {
-	if cell == "" {
-		return cell
-	}
-	switch cell[0] {
-	case '=', '+', '-', '@', '\t', '\r':
+	if dangerous(cell) {
 		return "'" + cell
 	}
 	return cell
+}
+
+// Unescape 是 Escape 的逆运算，导入时逐格调用。
+//
+// 没有它，「导出 → 在 Excel 里改 → 导回」会把值永久改掉：手机号
+// +8613800000000 导出成 '+8613800000000，导回时那个引号就留在库里了。
+//
+// 只还原 Escape 会写出来的形状，其余原样返回（值本身以引号开头、引号后面
+// 又不是公式前缀时——比如昵称写 `'abc`——引号是数据，不能被吃掉）。
+func Unescape(cell string) string {
+	if len(cell) > 1 && cell[0] == '\'' && dangerous(cell[1:]) {
+		return cell[1:]
+	}
+	return cell
+}
+
+// dangerous 判断一个值会不会被表格软件当成公式。
+//
+// 跳过开头的单引号再判：`'+86` 是「带 `+` 前缀的值」被转义后的样子，
+// 它自己也危险（剥掉引号就是公式），所以得再转义一次。
+// 否则 Unescape 分不清 `'+86` 里那个引号是转义还是数据，回程就不保真了。
+func dangerous(cell string) bool {
+	i := 0
+	for i < len(cell) && cell[i] == '\'' {
+		i++
+	}
+	if i >= len(cell) {
+		return false
+	}
+	switch cell[i] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return true
+	}
+	return false
 }
 
 // Read 解析一份 CSV，返回表头与数据行。

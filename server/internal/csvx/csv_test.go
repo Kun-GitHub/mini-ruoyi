@@ -28,6 +28,35 @@ func TestEscapeNeutralizesFormulaInjection(t *testing.T) {
 	}
 }
 
+func TestEscapeUnescapeRoundTrip(t *testing.T) {
+	// Unescape(Escape(x)) 必须等于 x，否则「导出 → 改 → 导回」会悄悄改值。
+	// 重点是最后一组：值本身就带引号的那几个。Escape 对它们会再多加一个引号，
+	// 否则 `'+86` 与「`+86` 被转义后的样子」长得一模一样，Unescape 无法区分该不该剥。
+	cases := []string{
+		"+8613800000000",
+		"=1+1",
+		"-2+3",
+		"@SUM(A1)",
+		"\t=1+1",
+		"\r=1+1",
+		"alice",
+		"张伟",
+		"13800000000",
+		"2026-10-08T06:37:24Z",
+		"",
+		"'",
+		"'abc", // 引号后面不是公式前缀：引号是数据
+		"'+86",
+		"''=1",
+		"'''@x",
+	}
+	for _, in := range cases {
+		if got := Unescape(Escape(in)); got != in {
+			t.Errorf("Unescape(Escape(%q)) = %q，没有还原", in, got)
+		}
+	}
+}
+
 func TestWriteAddsBOMAndEscapes(t *testing.T) {
 	var buf bytes.Buffer
 	w := NewWriter(&buf)

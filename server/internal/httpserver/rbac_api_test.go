@@ -412,6 +412,38 @@ func TestStatusValueIsValidated(t *testing.T) {
 	}
 }
 
+// TestLongPasswordIsRejectedWith400 盯住 bcrypt 的 72 **字节** 上限。
+//
+// 校验层的 binding:"max=72" 数的是字符（rune），前端 maxlength 数的是 UTF-16 码元，
+// 25 个汉字两边都能通过，却会被 bcrypt 拒掉——不管就是 500。
+// 四条会哈希密码的路（建号 / 重置 / 改自己的 / 批量导入）共用 auth.HashPassword，
+// 这里把四条都走一遍（导入那条在 users_csv_test.go）。
+func TestLongPasswordIsRejectedWith400(t *testing.T) {
+	r, _ := newTestRouter(t)
+	admin := login(t, r, "admin", "admin123")
+
+	long := strings.Repeat("密", 25) // 25 个字符 = 75 字节
+
+	cases := []struct {
+		name, method, path, body string
+	}{
+		{"建号", http.MethodPost, "/api/v1/users", `{"username":"longpw","password":"` + long + `"}`},
+		{"重置密码", http.MethodPut, "/api/v1/users/1/password", `{"password":"` + long + `"}`},
+		{"改自己的密码", http.MethodPut, "/api/v1/profile/password",
+			`{"old_password":"admin123","new_password":"` + long + `"}`},
+	}
+	for _, c := range cases {
+		w := call(t, r, c.method, c.path, c.body, admin)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s：返回 %d，期望 400（而不是 500）: %s", c.name, w.Code, w.Body.String())
+			continue
+		}
+		if e := decode(t, w); e.Msg != "error.passwordTooLong" {
+			t.Errorf("%s：msg = %q，期望 error.passwordTooLong", c.name, e.Msg)
+		}
+	}
+}
+
 func TestResetPasswordRevokesSessions(t *testing.T) {
 	r, _ := newTestRouter(t)
 	admin := login(t, r, "admin", "admin123")

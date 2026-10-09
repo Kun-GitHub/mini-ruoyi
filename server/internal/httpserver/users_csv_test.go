@@ -36,10 +36,19 @@ func importRequest(
 	t *testing.T, r *gin.Engine, s sessionInfo, fileContent string, dryRun bool,
 ) *httptest.ResponseRecorder {
 	t.Helper()
+	return importRequestWithPassword(t, r, s, fileContent, importPassword, dryRun)
+}
+
+// importRequestWithPassword 同上，但能换掉那个初始密码。
+// 密码的长度上限只能在这一层试探：binding 的 max=72 数的是**字符**。
+func importRequestWithPassword(
+	t *testing.T, r *gin.Engine, s sessionInfo, fileContent, password string, dryRun bool,
+) *httptest.ResponseRecorder {
+	t.Helper()
 
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
-	if err := mw.WriteField("password", importPassword); err != nil {
+	if err := mw.WriteField("password", password); err != nil {
 		t.Fatal(err)
 	}
 	fw, err := mw.CreateFormFile("file", "users.csv")
@@ -405,6 +414,71 @@ func TestImportUsersAcceptsExportedFile(t *testing.T) {
 	}
 	if len(report.Errors) != 1 || report.Errors[0].Rule != "unique" {
 		t.Errorf("把导出文件导回去的报告 = %+v，期望只有一条 unique", report)
+	}
+}
+
+// TestImportUsersKeepsEscapedValues 盯住「导出 → 改 → 导回」这条路的值保真。
+//
+// 导出时 +8613800000000 会被写成 '+8613800000000（公式注入防护），导入时
+// 那个引号必须被剥掉。没有 csvx.Unescape 的话它就会留在库里，
+// 而 mobile 只校验长度不校验格式，静默存进去，谁也不会发现。
+func TestImportUsersKeepsEscapedValues(t *testing.T) {
+	r, _ := newTestRouter(t)
+	admin := login(t, r, "admin", "admin123")
+
+	w := call(t, r, http.MethodPost, "/api/v1/users",
+		`{"username":"rt-orig","password":"rt-password","mobile":"+8613800000000"}`, admin)
+	if w.Code != http.StatusOK {
+		t.Fatalf("建号返回 %d: %s", w.Code, w.Body.String())
+	}
+
+	exported := ""
+	if w := call(t, r, http.MethodGet, "/api/v1/users/export?username=rt-orig", "", admin); w.Code == http.StatusOK {
+		exported = w.Body.String()
+	} else {
+		t.Fatalf("导出返回 %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(exported, "'+8613800000000") {
+		t.Fatalf("导出没有转义手机号（公式注入防护失效？）: %s", exported)
+	}
+
+	// 改掉用户名（避开唯一冲突）后导回，别的列一个字都不动
+	bounced := strings.Replace(exported, "rt-orig", "rt-copy", 1)
+	report := parseImportReport(t, importRequest(t, r, admin, bounced, false))
+	if report.Imported != 1 || len(report.Errors) != 0 {
+		t.Fatalf("导回报告 = %+v，期望导入 1 行无错", report)
+	}
+
+	var page struct {
+		List []struct {
+			Mobile string `json:"mobile"`
+		} `json:"list"`
+	}
+	if err := json.Unmarshal(decode(t, call(t, r, http.MethodGet, "/api/v1/users?username=rt-copy", "", admin)).Data, &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.List) != 1 {
+		t.Fatalf("导回后查不到 rt-copy，列表 = %+v", page.List)
+	}
+	if page.List[0].Mobile != "+8613800000000" {
+		t.Errorf("导回后 mobile = %q，期望 %q（转义没被剥掉）", page.List[0].Mobile, "+8613800000000")
+	}
+}
+
+// TestImportRejectsPasswordOver72Bytes 盯住非 ASCII 长密码：
+// 25 个汉字是 25 个字符、75 个字节，过得了 binding:"max=72"，过不了 bcrypt。
+// 这个差别必须回 400「密码太长」，不能落到 500。
+func TestImportRejectsPasswordOver72Bytes(t *testing.T) {
+	r, _ := newTestRouter(t)
+	admin := login(t, r, "admin", "admin123")
+
+	csvText := "username,nickname\nlongpw,\n"
+	w := importRequestWithPassword(t, r, admin, csvText, strings.Repeat("密", 25), false)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("长密码返回 %d，期望 400（而不是 500）: %s", w.Code, w.Body.String())
+	}
+	if e := decode(t, w); e.Msg != "error.passwordTooLong" {
+		t.Errorf("msg = %q，期望 error.passwordTooLong", e.Msg)
 	}
 }
 

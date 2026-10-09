@@ -71,6 +71,11 @@ func streamCSV[T any](
 			list = next.List
 		}
 		if len(list) == 0 {
+			// total 说要 N 行，翻到某页却空了：导出期间数据被删了。响应已经写出一部分，
+			// 无法再回错误，文件会比 total 少一截——至少要留下日志，否则这次导出
+			// 看着完整、实际短了，而无人知情。
+			log.Printf("导出 %s 提前结束：第 %d 页为空，已写 %d 行（total=%d）",
+				filename, page, written, first.Total)
 			break
 		}
 		for _, item := range list {

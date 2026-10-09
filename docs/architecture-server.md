@@ -202,6 +202,9 @@ srv.Shutdown(15s)                    优雅关闭
 
 **BOM 与公式注入。** 文件开头写 `\ufeff`，否则 Excel 打开 UTF-8 的 CSV 会把中文显示成乱码；
 首字符是 `=` `+` `-` `@` 的值前面加 `'`，否则 `=1+1` 这样的用户名会被 Excel 当公式执行。
+导入时按同一形状剥回来（`csvx.Unescape`，只剥 `Escape` 写得出来的那一种），
+不然「导出 → 在 Excel 里改 → 导回」会把值永久改掉：手机号 `+8613800000000`
+导出成 `'+8613800000000`，再导回来多出的引号就留在库里了。
 
 **超限报错，不截断。** 导出上限 10000 行、导入 500 行，超过直接报错——
 「导出了一个只有前一万行的文件」比报错更难发现。
@@ -209,10 +212,11 @@ srv.Shutdown(15s)                    优雅关闭
 **导入是 all-or-nothing。** 一行不合格则一行都不写（`CreateBatch` 单事务）。
 逐行结果用 **200 + 报告**返回，而不是 4xx：报告要带行号与规则，只能放在 `data` 里，
 而失败信封只保留 `code` / `msg` / `errors`，前端 `client.ts` 的 `ApiError` 会丢弃 `data`。
-真 4xx 只剩四种：没收到文件、缺少必要的列、行数超限、CSV 本身坏了。
+真 4xx 只剩五种：没收到文件、缺少必要的列、行数超限、CSV 本身坏了、密码不合规（太短或超过 72 字节）。
 
 **密码不进 CSV。** 密码由界面表单整批传一次，整批只做**一次** bcrypt——
 逐行哈希会让 500 行撞上 `cmd/server/main.go` 的 10 秒 `writeTimeout`（实测约 47ms/次，500 行约 23 秒）。
+哈希排在最后，所以 `dry_run=1` 查不到「密码太长」（它根本不哈希）——那是确认时才报的 400。
 
 **`?dry_run=1` 只查不写**，报告与真导入完全同形，用来先看一遍「哪几行不合格」。
 
@@ -380,7 +384,7 @@ cd server && go test ./...        # 全部
 go test ./... -run TestNewDB      # 单个
 ```
 
-当前 146 个用例，分布在 20 个测试文件里（`httpserver/fixture_test.go` 是夹具，不算用例）。`handler` / `job` / `auth` / `domain` / `cmd/server`
+当前 151 个用例，分布在 21 个测试文件里（`httpserver/fixture_test.go` 是夹具，不算用例）。`handler` / `job` / `auth` / `domain` / `cmd/server`
 没有独立测试文件——它们的正确性由 `httpserver` 的端到端用例覆盖（handler 的每个分支
 基本都对应一条 HTTP 断言）。
 
@@ -397,14 +401,15 @@ go test ./... -run TestNewDB      # 单个
 | `config/config_test.go` | 没有配置文件用默认值、文件部分覆盖、环境变量覆盖文件、未知字段被拒、非法取值被拒、`web.dir` 的候选路径顺序 |
 | `httpserver/static_test.go` | SPA 兜底、缓存头、API 404 返回 JSON、目录不完整时启动失败 |
 | `httpserver/router_test.go` | **公开端点集合的 fail-closed 断言**、**装配遗漏检测**、未登录一律 401、登录/登出全链路、停用用户立刻失效、响应信封、错误键、字段级校验数组、413/404 映射 |
-| `httpserver/rbac_api_test.go` | 权限隔离（有码放行、无码 403）、授权按码精确生效、未知权限码拒绝、409 影响面与 cascade 确认、四条删除守卫、唯一冲突带字段名、重置密码踢会话 |
+| `httpserver/rbac_api_test.go` | 权限隔离（有码放行、无码 403）、授权按码精确生效、未知权限码拒绝、409 影响面与 cascade 确认、四条删除守卫、唯一冲突带字段名、重置密码踢会话、非 ASCII 长密码回 400 而不是 500 |
 | `middleware/middleware_test.go` | 限流按 IP、伪造 `X-Forwarded-For` 无效、请求体上限、缓存头只匹配前缀 |
 | `system/system_test.go` | `/proc/stat` / `meminfo` / `statm` / `loadavg` 的解析（用真实样本）、`guest` 不计两次、单位与不可用标记、非 Linux 平台自报不可用 |
 | `httpserver/monitor_test.go` | 会话列表与踢人、不能踢自己、**强退不存在的用户返回 404**、登录日志记录成败与来源、操作日志记录写操作与 403、**操作日志不含请求体** |
 | `service/job_log_test.go` | 每次执行（成功 / 失败 / 跳过）都留一条记录与触发方式、**两条写库是同一个事务**（第二条失败时 `last_run_at` 不跟着变）、日志按保留期清理且不误删新记录 |
+| `service/log_service_test.go` | **`Flush` 返回时调用之前记下的日志确实已落库**——刷盘与入队同时就绪时 `select` 可能先刷后收，排队的行会漏一轮 |
 | `httpserver/job_logs_test.go` | 执行历史的三层授权（401 / 403 / `tool:job:list` 放行）、**触发一次后历史里真出现那一条**、未注册的 key 返回 404、页码越界钳到最后一页 |
-| `httpserver/users_csv_test.go` | **导入导出的完整行为**：导出跟着筛选走、行数超限报错不截断、干跑只查不写、一行不合格整批不写、文件内重复行报行号、导出的文件能原样导回、三个接口的授权（401 / 403） |
-| `csvx/csv_test.go` | BOM、公式注入转义、列数与表头不一致、超限不截断、空文件 |
+| `httpserver/users_csv_test.go` | **导入导出的完整行为**：导出跟着筛选走、行数超限报错不截断、干跑只查不写、一行不合格整批不写、文件内重复行报行号、导出的文件能原样导回（含值也不变）、密码超过 72 字节报 400、三个接口的授权（401 / 403） |
+| `csvx/csv_test.go` | BOM、公式注入转义与它的还原（`Unescape(Escape(x)) == x`）、列数与表头不一致、超限不截断、空文件 |
 | `httpserver/fixture_test.go` | 不是用例，是被各测试复用的夹具（临时库 + 完整路由） |
 | `httpserver/router_test.go` 的 `TestPanicReturnsEnvelope` | **panic 也要返回信封**——空 body 的 500 会让前端把「后端出错」误判成「后端没起来」 |
 

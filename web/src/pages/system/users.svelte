@@ -214,7 +214,9 @@
     a.href = url
     a.download = 'users-template.csv'
     a.click()
-    URL.revokeObjectURL(url)
+    // 先让浏览器把这次点击的下载启起来再释放：同步释放会在部分浏览器里
+    // 把还没开始读的 blob URL 抽掉，下载变成空文件。
+    setTimeout(() => URL.revokeObjectURL(url), 0)
   }
 
   /**
@@ -738,6 +740,9 @@
             {t('user.importTemplate')}
           </Button>
         </div>
+        <!-- 打开选择框之前把 value 清空：文件控件里 value 没变就不会触发 change，
+             「同一个文件改了内容再选一次」于是没有任何反应，校验传的还是旧内容。
+             在 onclick 里清而不是选完之后清，是为了选完还能在框里看见文件名。 -->
         <input
           id="imp-file"
           data-testid="import-file"
@@ -745,6 +750,7 @@
           accept=".csv,text/csv"
           class="cursor-pointer"
           disabled={importing}
+          onclick={(e) => ((e.currentTarget as HTMLInputElement).value = '')}
           onchange={pickImportFile}
         />
       </div>

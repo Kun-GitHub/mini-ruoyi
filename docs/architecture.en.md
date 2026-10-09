@@ -114,6 +114,7 @@ status, not by `code`.
 | Service unavailable | 503 | `error.serviceUnavailable` |
 | Internal server error | 500 | `error.internal` |
 | Wrong current password | 400 | `error.wrongOldPassword` |
+| Password over bcrypt's 72-byte limit | 400 | `error.passwordTooLong` |
 | The uploaded file itself is invalid (empty, say) | 400 | `error.invalidFile` |
 | The cron expression cannot be parsed | 400 | `error.invalidJobCron` |
 | Cannot kick your own current session | 403 | `error.cannotKickSelf` |
@@ -441,6 +442,9 @@ error.cannotKickSelf        error.frontendDisabled
 error.invalidJobCron        error.fileTooLarge
 error.quotaExceeded         error.invalidFile
 error.wrongOldPassword      error.invalidDate
+error.passwordTooLong       error.importNoFile
+error.importMissingColumns  error.importTooManyRows
+error.exportTooManyRows
 # the next two are produced by the frontend only (web/src/lib/api/client.ts); the backend never returns them:
 error.network               # fetch threw: nothing answered at all
 error.backendUnreachable    # something answered but it was not the envelope: a proxy intercepted it, or the backend is not running

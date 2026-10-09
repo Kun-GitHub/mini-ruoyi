@@ -77,7 +77,8 @@ func (s *UserService) Create(ctx context.Context, in CreateUserInput) (domain.Us
 
 	hash, err := auth.HashPassword(in.Password)
 	if err != nil {
-		// bcrypt 的 72 字节上限应在请求校验层挡住，走到这里是编程错误
+		// 超长密码已由 HashPassword 换成 domain.ErrPasswordTooLong（400），
+		// 走到这里的是真正的哈希故障
 		return domain.User{}, fmt.Errorf("hash password: %w", err)
 	}
 

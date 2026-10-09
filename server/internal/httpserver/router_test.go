@@ -376,8 +376,11 @@ func TestValidationFailureReturnsFieldErrors(t *testing.T) {
 	}
 }
 
-// TestPasswordLengthIsBoundedByBcryptLimit 覆盖 bcrypt 的 72 字节上限。
-// 不在校验层挡住的话，用户会拿到 500 而不是「参数不合法」。
+// TestPasswordLengthIsBoundedByBcryptLimit 覆盖在请求校验层能拦住的超长密码。
+//
+// 这里用的是 ASCII：validator 的 max 数的是**字符**，所以它只拦得住「字符数就超了」
+// 的输入。非 ASCII 的长密码（25 个汉字 = 75 字节）会穿过校验层，
+// 那种情况由 auth.HashPassword 换成 400，见 TestLongPasswordIsRejectedWith400。
 func TestPasswordLengthIsBoundedByBcryptLimit(t *testing.T) {
 	r, _ := newTestRouter(t)
 
