@@ -30,6 +30,13 @@ var (
 	// ErrAccountDisabled 账号已被停用，映射成 403。
 	ErrAccountDisabled = errors.New("account is disabled")
 
+	// ErrAccountLocked 连续登录失败次数过多、账号被临时锁定，映射成 429。
+	//
+	// 用 429 而不是 403：账号没有被禁用，过一会儿就能再试，
+	// 「稍后再试」正是 429 的语义；403 会让界面提示成「没有权限」，
+	// 而用户此时最需要知道的是「等多久」。
+	ErrAccountLocked = errors.New("account is temporarily locked")
+
 	// ErrUnauthorized 未登录或会话已失效，映射成 401。
 	ErrUnauthorized = errors.New("not authenticated")
 

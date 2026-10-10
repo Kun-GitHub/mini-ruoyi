@@ -35,6 +35,19 @@ const SessionTTL = 7 * 24 * time.Hour
 // 管理后台看不到 5 分钟的精度差异，但写量从「每请求」降到「每会话每 5 分钟」。
 const touchInterval = 5 * time.Minute
 
+const (
+	// MaxLoginFailures 是连续登录失败多少次后锁定账号。
+	//
+	// 5 次是「正常人忘密码」和「脚本在试」之间的一条线：手输很少连错 5 次，
+	// 而对脚本来说每 5 次就撞一堵 10 分钟的墙，爆破成本被拉高两个数量级。
+	// 只记日志不锁定（本项目此前的做法）对穷举几乎不设防。
+	MaxLoginFailures = 5
+
+	// LoginLockDuration 是锁定时长。到点后由**下一次登录尝试**自动解锁并清零计数，
+	// 不需要单独的解锁接口或定时任务——失败本身就是那条时间线的唯一读者。
+	LoginLockDuration = 10 * time.Minute
+)
+
 type SessionService struct {
 	sessions *repository.SessionRepository
 	users    *repository.UserRepository
@@ -74,7 +87,29 @@ func (s *SessionService) Login(ctx context.Context, username, password, ip, user
 		return LoginResult{}, fmt.Errorf("get user by username: %w", err)
 	}
 
+	// 锁定检查排在密码校验之前：锁着的账号即使密码对也进不来，
+	// 那时再跑一次 bcrypt 只是白烧 CPU——而这正是攻击者在制造的负载。
+	// 代价是「账号被锁」会被立刻察觉，但攻击者本来就能自己触发这个状态。
+	if user.LockedUntil != nil {
+		if now.Before(*user.LockedUntil) {
+			return LoginResult{}, domain.ErrAccountLocked
+		}
+		// 锁已到期：清零计数，给一轮全新的尝试机会。
+		// 不清的话计数会停在阈值上，下一次失败立刻重新上锁，等于永久锁死。
+		if err := s.users.ClearFailedLogins(ctx, username); err != nil {
+			log.Printf("清除用户 %s 的登录失败计数失败: %v", username, err)
+		}
+		user.LockedUntil = nil
+		user.FailedCount = 0
+	}
+
 	if !VerifyPassword(user.Password, password) {
+		// 记失败可能顺带把账号锁上，但**这次**响应仍是 badCredentials：
+		// 触发锁定的那一次给出「密码错了」，下一次才告诉用户「已被锁定」，
+		// 与界面提示的递进顺序一致。
+		if err := s.registerFailure(ctx, username); err != nil {
+			log.Printf("记录用户 %s 的登录失败: %v", username, err)
+		}
 		return LoginResult{}, domain.ErrBadCredentials
 	}
 	if !user.IsActive() {
@@ -108,8 +143,37 @@ func (s *SessionService) Login(ctx context.Context, username, password, ip, user
 	if err := s.users.SetLoginInfo(ctx, user.ID, ip, now); err != nil {
 		log.Printf("记录用户 %d 的登录信息失败: %v", user.ID, err)
 	}
+	// 连续失败计数到此作废（密码已经对了）。同样不阻断登录：
+	// 最坏的结果是计数偏高、提前锁定，而那远好过「密码对了却登不进去」。
+	if err := s.users.ClearFailedLogins(ctx, username); err != nil {
+		log.Printf("清除用户 %s 的登录失败计数失败: %v", username, err)
+	}
 
 	return LoginResult{Token: token, Session: session, User: user}, nil
+}
+
+// registerFailure 记一次登录失败；连续失败达到阈值时把账号锁定一段时间。
+//
+// 策略（阈值、时长）住在这一层，仓储只负责「自增计数」和「写到期时间」两件机械的事——
+// 这样阈值改动不必碰 SQL，仓储也不用知道 5 分钟还是 10 分钟。
+func (s *SessionService) registerFailure(ctx context.Context, username string) error {
+	count, err := s.users.AddFailedLogin(ctx, username)
+	if err != nil {
+		return fmt.Errorf("add failed login: %w", err)
+	}
+	if count < MaxLoginFailures {
+		return nil
+	}
+
+	until := s.now().UTC().Add(LoginLockDuration)
+	if err := s.users.SetLoginLock(ctx, username, &until); err != nil {
+		return fmt.Errorf("lock account %s: %w", username, err)
+	}
+	// 日志行前缀的时间戳是本地时区，消息里的时间也用本地：同一行出现两个相差 8 小时的
+	// 时钟只会让人误读（用 `.UTC()` 会变成前缀 +08:00、消息里 ...Z）。
+	log.Printf("用户 %s 连续登录失败 %d 次，已锁定至 %s",
+		username, count, until.Local().Format(time.RFC3339))
+	return nil
 }
 
 // Resolve 用 cookie 里的明文 token 换出用户与会话。

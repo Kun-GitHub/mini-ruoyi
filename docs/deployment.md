@@ -176,7 +176,8 @@ rsync -a --delete bin/web/ /opt/mini-ruoyi/web/
 | --- | --- |
 | 打开 `:8080` 看到 `{"code":404,"msg":"error.frontendDisabled"}` | 后端在纯 API 模式，没找到 `web/` 目录。看启动日志里那行「前端目录 ... 不存在」 |
 | 前端提示「无法连接后端服务」 | 后端没启动，或代理配置错了。浏览器控制台会打出实际的 HTTP 状态与响应体 |
-| 接口返回 500 | `journalctl -u mini-ruoyi`。500 一律带完整错误进日志，客户端只拿到一个键 |
+| 接口返回 500 | `journalctl -u mini-ruoyi`。500 一律带完整错误进日志，客户端只拿到一个键；日志行里的 `request_id` 与响应头 `X-Request-Id` 是同一个值 |
+| 把一次请求的几条日志捞出来 | 按 `request_id=<id>` 过滤。访问日志、5xx 错误、panic 各是一条记录，同一个请求共用一个 ID；用户报障时让他看响应头 `X-Request-Id` 即可 |
 | 所有人一起收到 429 | 前面有代理但没设 `APP_TRUSTED_PROXIES`，限流退化成全局了 |
 | 进程莫名重启 | `dmesg \| grep -i oom`。多半是没设 `GOMEMLIMIT` |
 | 服务监控页上 CPU / 内存显示「本平台读不到该指标」 | 正常。这两个指标读 `/proc`，只在 Linux 上有。磁盘和进程指标各平台都能读 |

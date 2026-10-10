@@ -23,6 +23,7 @@ server/
     ├── httpx/response.go           # the response envelope, error keys, error → HTTP status mapping
     ├── perm/perm.go                # permission code constants and grouping; no database access
     ├── auth/                       # password hashing, session issuing and parsing
+    ├── reqid/                      # request id (X-Request-Id) generation and validation, for log correlation
     ├── repository/
     │   ├── sqlite.go               # connection and pool
     │   ├── migrate.go              # the migration runner
@@ -39,7 +40,7 @@ server/
     │   └── disk_unix.go · disk_windows.go   # Statfs vs GetDiskFreeSpaceExW
     ├── job/                        # job.go is the registry; defs.go holds the job definitions
     ├── handler/                    # HTTP adaptation: binding, validation, responses
-    ├── middleware/                 # auth.go for sessions and CSRF; operlog.go for auditing; recovery.go wraps panics in the envelope
+    ├── middleware/                 # auth.go for sessions and CSRF; operlog.go for auditing; recovery.go wraps panics in the envelope; headers.go for security headers
     └── httpserver/
         ├── router.go               # route registration, middleware assembly
         ├── registrar.go            # route registration entry points (public / self / protected)
@@ -55,13 +56,14 @@ domain      → (depends on no internal package)
 config      → (depends on no internal package)
 system      → (depends on no internal package)
 job         → (depends on no internal package)
-httpx       → domain
+httpx       → domain, reqid
 perm        → (depends on no internal package)
+reqid       → (depends on no internal package)
 auth        → domain, repository
 repository  → domain
 service     → auth, domain, job, perm, repository, system
 handler     → auth, domain, httpx, middleware, perm, repository, service
-middleware  → auth, domain, httpx, perm, service
+middleware  → auth, domain, httpx, perm, reqid, service
 httpserver  → handler, httpx, middleware, perm
 ```
 
@@ -72,6 +74,7 @@ httpserver  → handler, httpx, middleware, perm
 | `system` | Collecting CPU / memory / disk / process metrics, each with an `available` flag — unavailable rather than a fake zero | Depends on service / handler |
 | `job` | The scheduled-job registry (the source of truth is code; the database stores only the enabled flag and cron); dependencies are declared as interfaces on the consumer side | Depends on service / auth (that would be a cycle) |
 | `perm` | Permission code constants and grouping, no database access | Depends on any other internal package |
+| `reqid` | Request id generation and validation (anything that fails validation is discarded, preventing log injection); shared by httpx and middleware so the two never import each other | Depends on any other internal package |
 | `auth` | Password hashing/verification, session issuing and parsing | Depends on handler / service |
 | `httpx` | The response envelope, error keys, error → status mapping | Depends on handler / service / repository |
 | `repository` | Single-table SQL, rows ↔ entities | Business rules, cross-table transaction orchestration |
@@ -127,31 +130,34 @@ Assembly order is execution order (`httpserver/router.go`):
 
 ```
 1. middleware.Recovery()                            panic → 500 (still the envelope, not an empty body)
-2. middleware.RequestLogger()                       method path status duration
-3. SetTrustedProxies(APP_TRUSTED_PROXIES)           ← not middleware, but router config, and it must precede rate limiting
-4. middleware.BodyLimit(1 MiB)                      request body cap (excluding /api/v1/files)
-5. middleware.RateLimit(20 rps, burst 40, TTL 3m)   per-IP rate limit
-6. middleware.ImmutableAssets("/assets/")           long-lived cache headers for static assets
+2. middleware.RequestID()                           validate/generate X-Request-Id, echo it and put it in the request context
+3. middleware.RequestLogger()                       method path status duration (logfmt, with request_id)
+4. middleware.SecureHeaders()                       CSP, nosniff, X-Frame-Options and friends, on **every** response
+5. SetTrustedProxies(APP_TRUSTED_PROXIES)           ← not middleware, but router config, and it must precede rate limiting
+6. middleware.BodyLimit(1 MiB)                      request body cap (excluding /api/v1/files)
+7. middleware.RateLimit(20 rps, burst 40, TTL 3m)   per-IP rate limit
+8. middleware.ImmutableAssets("/assets/")           long-lived cache headers for static assets
    ── routes ──
    GET  /healthz                                     → SQLite Ping
    /assets/*filepath
-   /api/v1   7→8→9 apply to the whole group; 10 is attached only to routes registered as protected
-   │   7. Auth.Require()                             no session → 401
-   │   8. Auth.CSRF()                                write request without a token → 403
-   │   9. middleware.OperationLog(...)                writes and 401/403 are audited
-   │  10. middleware.RequirePerm(code)                missing permission code → 403
+   /api/v1   9→10→11 apply to the whole group; 12 is attached only to routes registered as protected
+   │   9. Auth.Require()                             no session → 401
+   │  10. Auth.CSRF()                                write request without a token → 403
+   │  11. middleware.OperationLog(...)                writes and 401/403 are audited
+   │  12. middleware.RequirePerm(code)                missing permission code → 403
    └── menus / roles / users / permission list / files / jobs / monitoring / sessions / logs
    ── NoRoute ──
    /api/* and /assets/* → JSON 404; everything else → index.html (SPA fallback)
 ```
 
-Three ordering constraints — read this before touching the assembly order:
+Four ordering constraints — read this before touching the assembly order:
 
 | Constraint | Why |
 | --- | --- |
 | `SetTrustedProxies` before `RateLimit` | The limiter counts by `c.ClientIP()`, so configuring proxies afterwards is the same as not configuring them |
 | `Require` before `CSRF` | Establish "who" first; only then does a token have an owner to be compared against |
 | `OperationLog` before `RequirePerm` | Permission probing (403) has to be recorded too |
+| `SecureHeaders` stays in the outermost `r.Use` | Moving it into a route group limits it to those routes, and XSS / clickjacking target exactly the responses nobody thought of — including the panic fallback and the SPA page |
 
 `RequirePerm` is attached per protected route rather than via `r.Use`: permission codes are inherently per-route, and
 attaching them at assembly time makes omission impossible. `httpserver/registrar.go` has only three registration entry
@@ -161,19 +167,19 @@ and a wrong one panics at startup).
 
 ### 4.1 Route list
 
-42 endpoints today: **1 public + 4 self-service + 37 permission-protected** (the `/api/v1` prefix is omitted below).
+44 endpoints today: **1 public + 4 self-service + 39 permission-protected** (the `/api/v1` prefix is omitted below).
 
 | Group | Endpoints |
 | --- | --- |
 | Public | `POST /auth/login` |
 | Self-service (`self`) | `GET /auth/me`, `POST /auth/logout`, `PUT /profile`, `PUT /profile/password` |
 | Menus | `GET /menus`, `GET /menus/:id`, `POST /menus`, `PUT /menus/:id`, `DELETE /menus/:id` |
-| Roles | `GET /roles`, `GET /roles/:id`, `GET /roles/:id/grants`, `POST /roles`, `PUT /roles/:id`, `PUT /roles/:id/grants`, `DELETE /roles/:id` |
+| Roles | `GET /roles`, `GET /roles/:id`, `GET /roles/:id/grants`, `POST /roles`, `PUT /roles/:id`, `PUT /roles/:id/grants`, `DELETE /roles/:id`, `GET /roles/export` |
 | Users | `GET /users`, `GET /users/:id`, `POST /users`, `PUT /users/:id`, `PUT /users/:id/roles`, `PUT /users/:id/password`, `DELETE /users/:id`, `GET /users/export`, `POST /users/import` |
 | Permission list | `GET /perms` |
 | Files | `GET /files`, `GET /files/:id/download`, `POST /files`, `DELETE /files/:id` |
 | Jobs | `GET /jobs`, `PUT /jobs/:key`, `POST /jobs/:key/run`, `GET /jobs/:key/logs` |
-| Monitoring | `GET /system`, `GET /sessions`, `DELETE /sessions/:hash`, `DELETE /users/:id/sessions`, `GET /login-logs`, `GET /oper-logs`, `GET /oper-logs/export` |
+| Monitoring | `GET /system`, `GET /sessions`, `DELETE /sessions/:hash`, `DELETE /users/:id/sessions`, `GET /login-logs`, `GET /login-logs/export`, `GET /oper-logs`, `GET /oper-logs/export` |
 
 Read and write permission codes are declared separately: "can view" implying "can modify" is a common authorization
 hole, so `GET /roles/:id/grants` uses the `list` code while `PUT /roles/:id/grants` uses the `edit` code, and
@@ -193,12 +199,20 @@ lazily, or a port scan grows it unbounded with every IP ever seen.
 `SetTrustedProxies(nil)`, gin's `ClientIP()` honours a client-supplied `X-Forwarded-For` and the rate limit can be
 bypassed with one header line. `TestRateLimitIgnoresSpoofedForwardedFor` covers this.
 
+**Two `*-src` directives in the CSP point in opposite directions.** `script-src` must stay exactly `'self'` — almost
+the whole value of the policy is in it, and relaxing it is the same as having none (`TestSecureHeaders` pins this).
+`style-src`, on the other hand, must keep `'unsafe-inline'`: the Svelte components use `style="..."` attributes
+extensively (`menus.svelte`, `metric-bar.svelte`), and dropping it strips the page of its styling. Styles can do far
+less damage than scripts, so the compromise is deliberate rather than an oversight.
+
 ### 4.3 CSV import / export
 
-Three endpoints: `GET /users/export`, `POST /users/import`, `GET /oper-logs/export`, all sitting on `internal/csvx`
+Five endpoints: `GET /users/export`, `POST /users/import`, `GET /roles/export`, `GET /oper-logs/export`,
+`GET /login-logs/export`, all sitting on `internal/csvx`
 (zero dependencies, the stdlib's `encoding/csv`). A few conventions that are easy to miss but must hold:
 
-**An export must match the screen.** The filters live in `userFilter(c)` / `operLogFilter(c)`, shared by the list and
+**An export must match the screen.** The filters live in `userFilter(c)` / `roleFilter(c)` / `operLogFilter(c)` /
+`loginLogFilter(c)`, shared by the list and
 by the export — parse them twice and sooner or later the list is filtered by role while the export dumps the whole
 table. The export is an `<a href>`, not fetch + blob: downloading is the browser's job, so let it handle progress and
 the save location, while the fetch route costs more code and pulls the entire file into memory.
@@ -225,6 +239,36 @@ cannot catch "password too long" (a dry run never hashes) — that 400 only show
 
 **`?dry_run=1` validates without writing**, and its report has exactly the same shape as a real import, so you can
 see which rows fail before committing anything.
+
+### 4.4 Logs and the request id
+
+stdout logging goes through `log/slog`'s TextHandler (logfmt), assembled in `useSlog` in `cmd/server/main.go`:
+DEBUG when `server.env=dev`, otherwise INFO. `slog.SetDefault` also routes the standard library `log` package's
+default logger through the same handler, so the ~40 remaining `log.Printf` calls in `auth` / `service` / `job` come
+out in **the same format** as the structured ones — there is no need to migrate every call site just for consistency.
+
+One access log line looks like this:
+
+```
+time=2026-10-09T12:00:00.000+08:00 level=INFO msg=request method=POST path=/api/v1/auth/login status=401 duration_ms=48 ip=127.0.0.1 request_id=9f2c1a7b3e5d6a01
+```
+
+Four conventions:
+
+- **Fields, not concatenation**: `grep status=500` and `grep request_id=...` both work directly, where a
+  concatenated line can only be matched whole.
+- **Status ≥500 logs at ERROR, everything else at INFO**: most 4xx responses are ordinary business outcomes (wrong
+  password, missing permission, missing resource), and logging them as ERROR buries real problems in noise.
+- **`request_id` comes from `X-Request-Id`**, generated/validated by `internal/reqid`. A value supplied upstream
+  (nginx, a gateway) is only reused after `reqid.Valid` accepts it — allowing arbitrary characters means one line
+  `x\nlevel=ERROR msg="..."` from upstream injects a fake record (log injection). The same id is echoed in the
+  response header, so the `X-Request-Id` a user reports pinpoints that exact request.
+- **A panic is its own ERROR record with a `stack` field**: the panic `Recovery` catches does not exit the process,
+  so without a log there is no way to investigate it. The stack lives in a field rather than inside the message, or
+  the fields after it could not be parsed.
+
+Duration is `duration_ms` — an integer that can be compared and summed directly, rather than a `1.2s` string that
+has to be parsed.
 
 ## 5. The response envelope (`internal/httpx`)
 
@@ -394,7 +438,7 @@ cd server && go test ./...        # everything
 go test ./... -run TestNewDB      # one test
 ```
 
-There are 151 cases across 21 test files today (`httpserver/fixture_test.go` is a fixture, not a case). `handler` / `job` / `auth` / `domain` / `cmd/server` have no test files of
+There are 164 cases across 23 test files today (`httpserver/fixture_test.go` is a fixture, not a case). `handler` / `job` / `auth` / `domain` / `cmd/server` have no test files of
 their own — their correctness is covered by the end-to-end cases in `httpserver` (essentially every branch of a handler
 maps to one HTTP assertion).
 
@@ -409,16 +453,18 @@ maps to one HTTP assertion).
 | `repository/session_repository_test.go` | **the datetime storage format**, time round-trips, expiry cleanup, kicking by user, cascading on user delete |
 | `httpx/response_test.go` | error keys unique and correctly named, frontend dictionary coverage (including **the two frontend-generated keys hardcoded in client.ts**), **every backend field name and validation rule has a message key** |
 | `config/config_test.go` | defaults without a config file, partial file overrides, environment overriding the file, unknown fields rejected, invalid values rejected, the candidate order of `web.dir` |
-| `httpserver/static_test.go` | SPA fallback, cache headers, API 404s returning JSON, startup failing on an incomplete directory |
+| `httpserver/static_test.go` | SPA fallback, cache headers, API 404s returning JSON, startup failing on an incomplete directory, **security headers reaching both HTML and API responses** |
 | `httpserver/router_test.go` | **fail-closed assertions on the public endpoint set**, **detection of missing assembly**, 401 for everything unauthenticated, the full login/logout path, a disabled user losing access immediately, the response envelope, error keys, the field-level validation array, 413/404 mapping |
 | `httpserver/rbac_api_test.go` | permission isolation (holding the code passes, missing it gives 403), grants taking effect per code, unknown permission codes rejected, the 409 impact and cascade confirmation, the four delete guards, unique conflicts carrying the field name, resetting a password kicking sessions, an over-72-byte non-ASCII password returning 400 rather than 500 |
-| `middleware/middleware_test.go` | rate limiting per IP, spoofed `X-Forwarded-For` being ignored, the request body cap, cache headers matching the prefix only |
+| `middleware/middleware_test.go` | rate limiting per IP, spoofed `X-Forwarded-For` being ignored, the request body cap, cache headers matching the prefix only, **security headers present and the CSP's `script-src` never relaxed**, **an invalid upstream request-id being replaced**, **access logs being structured with 5xx at ERROR** |
+| `reqid/reqid_test.go` | id length and uniqueness, **format validation rejecting newlines/quotes (log injection)**, context read/write |
+| `httpserver/login_lockout_test.go` | **the correct password being rejected after 5 consecutive failures**, the locked attempt's login-log `reason` matching the response key, **automatic unlock once the lockout has expired**, a successful sign-in resetting the counter, and **an admin password reset unlocking immediately** |
 | `system/system_test.go` | parsing `/proc/stat` / `meminfo` / `statm` / `loadavg` (using real samples), `guest` not counted twice, units and the unavailable flag, non-Linux platforms reporting unavailability |
 | `httpserver/monitor_test.go` | the session list and kicking, not being able to kick yourself, **404 when force-logging-out an unknown user**, login logs recording success and origin, operation logs recording writes and 403s, **operation logs containing no request bodies** |
 | `service/job_log_test.go` | every run (success / failure / skip) leaves a record with its trigger, **both writes share one transaction** (when the second fails, `last_run_at` does not move), logs are cleaned up by retention without touching fresh rows |
 | `service/log_service_test.go` | **when `Flush` returns, everything recorded before the call is in the database** — with a queued row and a flush request both ready, `select` can flush before it collects, dropping that row for a round |
 | `httpserver/job_logs_test.go` | the three authorization layers on run history (401 / 403 / `tool:job:list` allows), **one trigger makes exactly one row appear**, an unregistered key returns 404, an out-of-range page is clamped to the last one |
-| `httpserver/users_csv_test.go` | **the full behaviour of import/export**: the export follows the filters, over-limit is an error rather than a truncation, a dry run writes nothing, one bad row blocks the whole batch, a duplicated row is reported with its row number, an exported file imports back unchanged (values included), a password over 72 bytes gets a 400, and the three endpoints' authorization (401 / 403) |
+| `httpserver/users_csv_test.go` | **the full behaviour of import/export**: the export follows the filters, over-limit is an error rather than a truncation, a dry run writes nothing, one bad row blocks the whole batch, a duplicated row is reported with its row number, an exported file imports back unchanged (values included), a password over 72 bytes gets a 400, the role and login-log exports' headers and filters, and the four import/export endpoints' authorization (401 / 403) |
 | `csvx/csv_test.go` | BOM, formula-injection escaping and its inverse (`Unescape(Escape(x)) == x`), a row whose column count does not match the header, over-limit without truncation, an empty file |
 | `httpserver/fixture_test.go` | not a test case but the fixture the other tests reuse (a temporary database plus the full router) |
 | `TestPanicReturnsEnvelope` in `httpserver/router_test.go` | **a panic still returns the envelope** — a 500 with an empty body makes the frontend mistake "the backend errored" for "the backend is not up" |
@@ -465,7 +511,7 @@ migration) plus 3 test files, and every step has something to copy from. **The r
 Taking a new `widget` as the example:
 
 1. **Entity** — `domain/widget.go`: fields plus JSON tags (the field names are the public contract, see §5.2)
-2. **Table DDL** — `repository/migrations/0013_init_widgets.sql`: the highest existing number is `0012`, and migrations only ever append
+2. **Table DDL** — `repository/migrations/0014_init_widgets.sql`: the highest existing number is `0013`, and migrations only ever append
 3. **Repository** — `repository/widget_repository.go`: `List` / `Count` / `GetByID` / `Create` / `Update` / `Delete`,
    returning `domain.ErrNotFound` when absent, with an `ExistsXxx` pre-check for uniqueness
 4. **Service** — `service/widget_service.go`: pagination normalized into `Page[T]`, uniqueness conflicts returned as `domain.Duplicate("field")`,

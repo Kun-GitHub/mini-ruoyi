@@ -3,6 +3,7 @@
 
   import { ApiError, api } from '$lib/api/client'
   import type { Job, JobLog, Page } from '$lib/api/types'
+  import TableEmpty from '$lib/components/table-empty.svelte'
   import { Badge } from '$lib/components/ui/badge'
   import { Button } from '$lib/components/ui/button'
   import {
@@ -161,11 +162,7 @@
       </TableHeader>
       <TableBody>
         {#if rows.length === 0}
-          <TableRow>
-            <TableCell colspan={7} class="py-10 text-center text-muted-foreground">
-              {loading ? t('common.loading') : t('common.empty')}
-            </TableCell>
-          </TableRow>
+          <TableEmpty {loading} colspan={7} />
         {/if}
         {#each rows as job (job.job_key)}
           <TableRow>
@@ -295,11 +292,7 @@
           </TableHeader>
           <TableBody>
             {#if logs.length === 0}
-              <TableRow>
-                <TableCell colspan={5} class="py-10 text-center text-muted-foreground">
-                  {logLoading ? t('common.loading') : t('common.empty')}
-                </TableCell>
-              </TableRow>
+              <TableEmpty loading={logLoading} colspan={5} />
             {/if}
             {#each logs as log (log.id)}
               <TableRow>

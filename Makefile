@@ -56,7 +56,7 @@ db-clean: ## 清掉 data.db 里开发期产生的数据（提交前跑一次）
 		DELETE FROM sys_roles WHERE code <> 'admin'; \
 		DELETE FROM sys_sessions; DELETE FROM sys_login_logs; DELETE FROM sys_oper_logs; DELETE FROM sys_files; \
 		DELETE FROM sys_job_logs; \
-		UPDATE sys_users SET login_ip = '', login_at = NULL; \
+		UPDATE sys_users SET login_ip = '', login_at = NULL, failed_count = 0, locked_until = NULL; \
 		UPDATE sys_jobs  SET last_run_at = NULL, last_status = '', last_error = '', last_duration_ms = 0; \
 		DELETE FROM sqlite_sequence;" \
 	&& sqlite3 data.db "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/null \

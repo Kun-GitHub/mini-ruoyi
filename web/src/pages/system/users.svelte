@@ -4,6 +4,10 @@
   import { ApiError, api } from '$lib/api/client'
   import { deleteWithConfirm } from '$lib/api/delete'
   import type { FieldError, ImportReport, Page, Role, User, UserDetail } from '$lib/api/types'
+  import FilterBar from '$lib/components/filter-bar.svelte'
+  import ListHeader from '$lib/components/list-header.svelte'
+  import Pagination from '$lib/components/pagination.svelte'
+  import TableEmpty from '$lib/components/table-empty.svelte'
   import { Badge } from '$lib/components/ui/badge'
   import { Button } from '$lib/components/ui/button'
   import {
@@ -27,38 +31,19 @@
   } from '$lib/components/ui/table'
   import { fieldErrorOf, validationText } from '$lib/i18n/errors'
   import { t, type MessageKey } from '$lib/i18n/index.svelte'
-  import { replaceQuery, route } from '$lib/router.svelte'
+  import { createListState, errKey } from '$lib/list-state.svelte'
   import { confirm } from '$lib/stores/confirm.svelte'
   import { notifyError, notifySuccess } from '$lib/stores/notify.svelte'
   import { session } from '$lib/stores/session.svelte'
 
-  const PAGE_SIZE = 20
-
-  /**
-   * 分页与筛选是**组件本地状态**，只在挂载时从 URL 读一次。
-   *
-   * 为什么不持续跟随 URL：多标签页会把打开过的页面同时渲染，而 URL 只反映
-   * 当前激活的那个标签。隐藏的页面若持续读全局 URL，切换标签会把它自己的
-   * 筛选条件冲掉，还会让它拿着别人的参数重新发请求。
-   *
-   * 代价是浏览器前进/后退不会回填筛选框。刷新仍然有效——挂载时读一次 URL。
-   */
-  const initial = new URLSearchParams(route.search)
-  let page = $state(Math.max(1, Number(initial.get('page') ?? 1) || 1))
-  let filters = $state({
-    username: initial.get('username') ?? '',
-    nickname: initial.get('nickname') ?? '',
-    mobile: initial.get('mobile') ?? '',
-    status: initial.get('status') ?? '',
-    role_id: initial.get('role_id') ?? '',
+  const list = createListState<User, 'username' | 'nickname' | 'mobile' | 'status' | 'role_id'>({
+    endpoint: '/users',
+    filterKeys: ['username', 'nickname', 'mobile', 'status', 'role_id'],
+    exportPath: '/api/v1/users/export',
   })
 
-  let total = $state(0)
-  let rows = $state<User[]>([])
-  let loading = $state(false)
-
   onMount(() => {
-    void load()
+    void list.load()
     // 筛选栏里的角色下拉也要数据。它和编辑弹窗共用 roleOptions，
     // 弹窗打开时还会再拉一次（见 loadRoleOptions 的说明）。
     void loadRoleOptions()
@@ -69,55 +54,6 @@
   const canPickRoles = $derived(session.can('system:role:list'))
   let roleOptions = $state<Role[]>([])
   let roleTotal = $state(0)
-
-  async function load() {
-    loading = true
-    try {
-      const q = new URLSearchParams()
-      q.set('page', String(page))
-      q.set('page_size', String(PAGE_SIZE))
-      for (const key of ['username', 'nickname', 'mobile', 'status', 'role_id'] as const) {
-        if (filters[key]) q.set(key, filters[key])
-      }
-      const res = await api.get<Page<User>>(`/users?${q}`)
-      rows = res.list
-      total = res.total
-      // 服务端会把越界的 page 钳到最后一页，以它为准。
-      // 自己留着 page=99 的话，分页器会显示 "99 / 2" 这种不可能的状态
-      if (res.page !== page) {
-        page = res.page
-        syncURL()
-      }
-    } catch (err) {
-      notifyError(errKey(err))
-    } finally {
-      loading = false
-    }
-  }
-
-  /** 把当前状态反映到地址栏，方便刷新与分享。注意方向是单向的：只写不读。 */
-  function syncURL() {
-    replaceQuery({ ...filters, page: page === 1 ? undefined : page })
-  }
-
-  function search() {
-    page = 1
-    syncURL()
-    void load()
-  }
-
-  function resetFilters() {
-    filters = { username: '', nickname: '', mobile: '', status: '', role_id: '' }
-    page = 1
-    syncURL()
-    void load()
-  }
-
-  function goPage(target: number) {
-    page = target
-    syncURL()
-    void load()
-  }
 
   /**
    * 拉角色候选列表。
@@ -137,30 +73,7 @@
     }
   }
 
-  // 后端的键是字符串，这里收窄成 MessageKey：它最后总是喂给 t() 或 notifyError()，
-  // 收窄一次比在每个调用点 as 一次要好
-  function errKey(err: unknown): MessageKey {
-    return err instanceof ApiError ? (err.key as MessageKey) : 'error.internal'
-  }
-
   // ---- 导入 / 导出 ----
-
-  /**
-   * 导出链接用 `Button` 的 href 分支（渲染成 `<a>`），而不是按钮 + onclick。
-   *
-   * 导出是浏览器的下载行为：交给它自己处理进度、保存位置与失败重试。
-   * 用 fetch 拿 blob 再手工造链接要多写一堆代码，还会把整份文件读进内存。
-   *
-   * 筛选条件必须带上：导出的应该是屏幕上看到的那些行，不是全表。
-   */
-  const exportHref = $derived.by(() => {
-    const q = new URLSearchParams()
-    for (const key of ['username', 'nickname', 'mobile', 'status', 'role_id'] as const) {
-      if (filters[key]) q.set(key, filters[key])
-    }
-    const qs = q.toString()
-    return `/api/v1/users/export${qs ? `?${qs}` : ''}`
-  })
 
   /** 报告里最多列出的错误条数，超过的部分只报个数。 */
   const IMPORT_ERROR_LIMIT = 20
@@ -236,7 +149,7 @@
       if (!dryRun && importReport.imported > 0) {
         notifySuccess('notify.imported', { count: importReport.imported })
         importOpen = false
-        await load()
+        await list.load()
       }
     } catch (err) {
       importReport = null
@@ -345,7 +258,7 @@
 
       notifySuccess('notify.saved')
       formOpen = false
-      await load()
+      await list.load()
     } catch (err) {
       if (err instanceof ApiError) {
         fieldErrors = err.fieldErrors
@@ -390,8 +303,7 @@
       if (!done) return
       notifySuccess('notify.deleted')
       // 删掉本页最后一条时要往前翻一页，否则会停在一个空白页
-      if (rows.length === 1 && page > 1) goPage(page - 1)
-      else await load()
+      await list.refreshAfterDelete()
     } catch (err) {
       notifyError(errKey(err))
     }
@@ -419,7 +331,7 @@
     try {
       await api.del(`/users/${user.id}/sessions`)
       notifySuccess('notify.kicked')
-      await load()
+      await list.load()
     } catch (err) {
       notifyError(errKey(err))
     } finally {
@@ -428,71 +340,58 @@
   }
 
   let busyID = $state<number | null>(null)
-  const totalPages = $derived(Math.max(1, Math.ceil(total / PAGE_SIZE)))
 </script>
 
 <div class="flex flex-col gap-4">
-  <!-- 筛选栏。
+  <!-- 筛选栏。字段固定宽度、换行排布的理由在 FilterBar 里；
        移动端折成两列，桌面端一行放下——后台主要是桌面用，不为窄屏做抽屉。 -->
-  <div data-testid="filters" class="rounded-lg border bg-card p-4">
-    <div class="flex flex-wrap items-end gap-3">
+  <FilterBar onSearch={list.search} onReset={list.reset}>
+    <label class="flex w-48 flex-col gap-1.5 text-sm">
+      <span class="text-muted-foreground">{t('user.username')}</span>
+      <Input bind:value={list.filters.username} />
+    </label>
+    <label class="flex w-48 flex-col gap-1.5 text-sm">
+      <span class="text-muted-foreground">{t('user.nickname')}</span>
+      <Input bind:value={list.filters.nickname} />
+    </label>
+    <label class="flex w-48 flex-col gap-1.5 text-sm">
+      <span class="text-muted-foreground">{t('user.mobile')}</span>
+      <Input bind:value={list.filters.mobile} />
+    </label>
+    <label class="flex w-48 flex-col gap-1.5 text-sm">
+      <span class="text-muted-foreground">{t('common.status')}</span>
+      <NativeSelect class="w-full" bind:value={list.filters.status}>
+        <option value="">{t('common.all')}</option>
+        <option value="active">{t('common.status.active')}</option>
+        <option value="inactive">{t('common.status.inactive')}</option>
+      </NativeSelect>
+    </label>
+    <!-- 没 role:list 权限就拉不到角色列表，那这个下拉只能是空的；
+         与其摆一个永远没有选项的框，不如不显示 -->
+    {#if canPickRoles}
       <label class="flex w-48 flex-col gap-1.5 text-sm">
-        <span class="text-muted-foreground">{t('user.username')}</span>
-        <Input bind:value={filters.username} onkeydown={(e) => e.key === 'Enter' && search()} />
-      </label>
-      <label class="flex w-48 flex-col gap-1.5 text-sm">
-        <span class="text-muted-foreground">{t('user.nickname')}</span>
-        <Input bind:value={filters.nickname} onkeydown={(e) => e.key === 'Enter' && search()} />
-      </label>
-      <label class="flex w-48 flex-col gap-1.5 text-sm">
-        <span class="text-muted-foreground">{t('user.mobile')}</span>
-        <Input bind:value={filters.mobile} onkeydown={(e) => e.key === 'Enter' && search()} />
-      </label>
-      <label class="flex w-48 flex-col gap-1.5 text-sm">
-        <span class="text-muted-foreground">{t('common.status')}</span>
-        <NativeSelect class="w-full" bind:value={filters.status}>
+        <span class="text-muted-foreground">{t('user.roles')}</span>
+        <NativeSelect class="w-full" bind:value={list.filters.role_id}>
           <option value="">{t('common.all')}</option>
-          <option value="active">{t('common.status.active')}</option>
-          <option value="inactive">{t('common.status.inactive')}</option>
+          {#each roleOptions as role (role.id)}
+            <option value={String(role.id)}>{role.name}</option>
+          {/each}
         </NativeSelect>
       </label>
-      <!-- 没 role:list 权限就拉不到角色列表，那这个下拉只能是空的；
-           与其摆一个永远没有选项的框，不如不显示 -->
-      {#if canPickRoles}
-        <label class="flex w-48 flex-col gap-1.5 text-sm">
-          <span class="text-muted-foreground">{t('user.roles')}</span>
-          <NativeSelect class="w-full" bind:value={filters.role_id}>
-            <option value="">{t('common.all')}</option>
-            {#each roleOptions as role (role.id)}
-              <option value={String(role.id)}>{role.name}</option>
-            {/each}
-          </NativeSelect>
-        </label>
-      {/if}
+    {/if}
+  </FilterBar>
 
-      <!-- 按钮跟在字段后面，一起换行：字段改成固定宽度后，
-           再把按钮推到最右边会显得很散，而且中间空一大片 -->
-      <div class="flex gap-2">
-        <Button variant="outline" onclick={resetFilters}>{t('common.reset')}</Button>
-        <Button onclick={search}>{t('common.search')}</Button>
-      </div>
-    </div>
-  </div>
-
-  <div class="flex items-center justify-between">
-    <p class="text-sm text-muted-foreground">{t('common.total', { total })}</p>
-    <div class="flex items-center gap-2">
-      <Button data-testid="export-users" variant="outline" size="sm" href={exportHref}>
-        {t('common.export')}
+  <ListHeader total={list.total}>
+    <Button data-testid="export-users" variant="outline" size="sm" href={list.exportHref}>
+      {t('common.export')}
+    </Button>
+    {#if session.can('system:user:add')}
+      <Button data-testid="import-open" variant="outline" size="sm" onclick={openImport}>
+        {t('common.import')}
       </Button>
-      {#if session.can('system:user:add')}
-        <Button data-testid="import-open" variant="outline" size="sm" onclick={openImport}>
-          {t('common.import')}
-        </Button>
-        <Button size="sm" onclick={openCreate}>{t('common.create')}</Button>
-      {/if}
-    </div>
-  </div>
+      <Button size="sm" onclick={openCreate}>{t('common.create')}</Button>
+    {/if}
+  </ListHeader>
 
   <div class="rounded-lg border bg-card">
     <Table>
@@ -507,14 +406,10 @@
         </TableRow>
       </TableHeader>
       <TableBody>
-        {#if rows.length === 0}
-          <TableRow>
-            <TableCell colspan={6} class="py-10 text-center text-muted-foreground">
-              {loading ? t('common.loading') : t('common.empty')}
-            </TableCell>
-          </TableRow>
+        {#if list.rows.length === 0}
+          <TableEmpty loading={list.loading} colspan={6} />
         {/if}
-        {#each rows as user (user.id)}
+        {#each list.rows as user (user.id)}
           <TableRow>
             <TableCell class="font-medium">{user.username}</TableCell>
             <TableCell>{user.nickname || '—'}</TableCell>
@@ -579,17 +474,7 @@
     </Table>
   </div>
 
-  {#if totalPages > 1}
-    <div class="flex items-center justify-end gap-2 text-sm">
-      <Button variant="outline" size="sm" disabled={page <= 1} onclick={() => goPage(page - 1)}>
-        ‹
-      </Button>
-      <span class="text-muted-foreground tabular-nums">{page} / {totalPages}</span>
-      <Button variant="outline" size="sm" disabled={page >= totalPages} onclick={() => goPage(page + 1)}>
-        ›
-      </Button>
-    </div>
-  {/if}
+  <Pagination page={list.page} totalPages={list.totalPages} onGo={list.goPage} />
 </div>
 
 <!-- 新建 / 编辑 -->

@@ -96,6 +96,7 @@ json.Marshal(Response{Msg: "ok", Data: x})   // 忘了设 Code
 | 用户名或密码错误 | 401 | `error.badCredentials` |
 | 内置资源不可改/删 | 403 | `error.protected` |
 | 账号已停用 | 403 | `error.accountDisabled` |
+| 连续登录失败过多、账号临时锁定（默认 5 次锁 10 分钟） | 429 | `error.accountLocked` |
 | 已登录但缺少权限 | 403 | `error.forbidden` |
 | CSRF 令牌缺失或不匹配 | 403 | `error.csrfInvalid` |
 | 不能删除当前登录账号 | 403 | `error.cannotDeleteSelf` |
@@ -430,7 +431,7 @@ error.quotaExceeded         error.invalidFile
 error.wrongOldPassword      error.invalidDate
 error.passwordTooLong       error.importNoFile
 error.importMissingColumns  error.importTooManyRows
-error.exportTooManyRows
+error.exportTooManyRows     error.accountLocked
 # 以下两个仅由前端产生（web/src/lib/api/client.ts），后端不会返回：
 error.network               # fetch 抛异常：没有任何东西应答
 error.backendUnreachable    # 有响应但不是信封：请求被代理拦下，或后端没启动
@@ -456,6 +457,7 @@ error.backendUnreachable    # 有响应但不是信封：请求被代理拦下�
 | 按 IP 限流 20 rps / burst 40 | `middleware.RateLimit` | 防突发流量打崩进程；**按 IP 而非全进程**，否则单个客户端刷满配额会把所有用户一起打成 429 |
 | 限流器惰性 GC（3 分钟） | 同上 | 不清理的话被扫描时 map 会随访问过的 IP 无上限增长，这比限流本身更危险 |
 | 请求体上限 1 MiB | `middleware.BodyLimit` | 一个超大 body 就能打爆 1G 内存 |
+| 单账号连续登录失败 5 次锁 10 分钟 | `auth.SessionService.Login` + `sys_users.failed_count/locked_until` | 只记日志不锁定对密码穷举几乎不设防。**在 bcrypt 之前查锁**——锁着的账号密码再对也进不来，此时跑 bcrypt 只是白烧 CPU，而这正是攻击者在制造的负载 |
 | SQLite 连接池上限 4 | `repository.NewDB` | SQLite 单写者，多余连接只增加内存和锁等待 |
 | `busy_timeout=5000` | DSN `_pragma` | 写冲突时等待而非立刻 `SQLITE_BUSY` |
 | WAL + `synchronous=NORMAL` | 同上 | 读写不互相阻塞，且比 `FULL` 快很多 |

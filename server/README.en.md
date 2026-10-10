@@ -33,13 +33,15 @@ make build && make run       # the binary and the frontend output land in bin/
 At startup any unapplied migrations run automatically and `data.db` is created if it does not exist.
 
 The `data.db` that ships in the repository is an **already initialized** database: every migration is recorded
-(`0002`–`0012` all applied) and its baseline contents are one `admin` user, one built-in role, 13 menus and 3 jobs. It
+(`0002`–`0013` all applied) and its baseline contents are one `admin` user, one built-in role, 13 menus and 3 jobs. It
 works out of the box.
 
 ⚠️ **This same database is also the live development database** (when you start the backend from `server/`,
 `database.path` points at it). A single login writes sessions and logs into it, and they get committed along with
 everything else — which shows up as "I cloned this and the online-sessions page lists someone else's records".
 Run **`make db-clean`** before committing to restore it.
+(It also zeroes the login-failure counters — if you mistyped `admin`'s password five times during development and
+locked yourself out, that is the unlock.)
 
 The eventual fix is to rebuild it from `migrations/` + seed SQL (see
 [../docs/architecture.en.md](../docs/architecture.en.md) §8); at that point the database goes away and so does this
@@ -87,7 +89,7 @@ Everything lives under `/api/v1`. The full contract (envelope, error keys, delet
 At startup it prints the current endpoint breakdown:
 
 ```
-已注册 42 个 API 端点（公开 1 / 仅登录 4 / 需权限 37）
+已注册 44 个 API 端点（公开 1 / 仅登录 4 / 需权限 39）
 ```
 
 **How authentication works**: after login the server hands out an `mr_session` cookie (HttpOnly / SameSite=Lax).
@@ -115,6 +117,7 @@ response or from the `csrf_token` field of `/auth/me`.
 | PUT | `/roles/:id` | `system:role:edit` | |
 | PUT | `/roles/:id/grants` | `system:role:edit` | overwrites the grants wholesale |
 | DELETE | `/roles/:id` | `system:role:delete` | supports `?cascade=true` |
+| GET | `/roles/export` | `system:role:list` | export CSV under the current filters (grants are not exported: they are a separate relation) |
 | GET | `/perms` | `system:perm:list` | the permission list, grouped by resource, **including the endpoints each permission code guards** (from the route table assembled at startup; no database query) |
 | GET | `/users` | `system:user:list` | paginated, filterable by `username` / `nickname` / `mobile` / `status` / `role_id` |
 | GET | `/users/:id` | `system:user:list` | includes `role_ids` |
@@ -130,6 +133,7 @@ response or from the `csrf_token` field of `/auth/me`.
 | DELETE | `/sessions/:hash` | `monitor:session:kick` | kick one session; the other side is invalidated on its next request |
 | DELETE | `/users/:id/sessions` | `monitor:session:kick` | force-log-out all of one user's sessions |
 | GET | `/login-logs` | `monitor:loginlog:list` | login logs, filterable by `username` / `status` / `start` / `end` |
+| GET | `/login-logs/export` | `monitor:loginlog:list` | export CSV under the current filters (`reason` is an i18n key, not translated text) |
 | GET | `/oper-logs` | `monitor:operlog:list` | operation logs, filterable by `username` / `method` / `path` / `start` / `end` |
 | GET | `/oper-logs/export` | `monitor:operlog:list` | export CSV under the current filters (one column more than the list: `user_agent`) |
 | GET | `/files` | `tool:file:list` | file list; the response also carries quota usage |
@@ -213,7 +217,7 @@ On a failing response `msg` is an **i18n key**, not text; the frontend renders t
 | 409 | `error.hasDependents` / `error.lastAdmin` / `error.duplicate` |
 | 400 | `error.invalidJobCron` / `error.invalidFile` / `error.wrongOldPassword` / `error.passwordTooLong` / `error.importNoFile` / `error.importMissingColumns` / `error.importTooManyRows` / `error.exportTooManyRows` |
 | 413 | `error.bodyTooLarge` / `error.fileTooLarge` / `error.quotaExceeded` |
-| 429 | `error.tooManyRequests` |
+| 429 | `error.tooManyRequests` (per-IP rate limit) / `error.accountLocked` (5 consecutive failed sign-ins lock the account for 10 minutes — even the correct password is rejected while locked) |
 | 500 | `error.internal` |
 | 503 | `error.serviceUnavailable` |
 | 404 | `error.frontendDisabled` (hitting a non-API path in **API-only mode**, telling you the frontend is not deployed) |
@@ -221,7 +225,14 @@ On a failing response `msg` is an **i18n key**, not text; the frontend renders t
 The backend does **not** return `error.network` or `error.backendUnreachable` — the frontend produces those (the former
 means nothing answered the request; the latter means something answered but it was not this service's envelope format).
 
-Built-in limits: request body up to 1 MiB, rate limiting per IP at 20 rps (burst 40).
+Built-in limits: request body up to 1 MiB, rate limiting per IP at 20 rps (burst 40), and 5 consecutive failed
+sign-ins lock an account for 10 minutes (`auth.MaxLoginFailures` / `auth.LoginLockDuration`; an admin resetting the
+password unlocks it immediately).
+
+stdout logging is structured logfmt (`log/slog`): access logs carry `method` / `path` / `status` / `duration_ms` /
+`request_id`, logging at ERROR for status ≥500 and INFO otherwise. The same `request_id` is echoed in the
+`X-Request-Id` response header; a valid value supplied by an upstream proxy is reused, an invalid one is regenerated
+(to prevent log injection).
 Audit logs are written in batches, so there is **up to a 2-second delay** (why: [../docs/architecture.en.md](../docs/architecture.en.md) §5.2).
 Retention is controlled by `APP_LOG_RETENTION_DAYS`, 30 days by default.
 
@@ -292,10 +303,11 @@ cmd/server/main.go                 startup, dependency wiring, graceful shutdown
 internal/config/                   environment variables → Config
 internal/domain/                   entities + domain errors (the innermost layer)
 internal/httpx/                    response envelope, error keys, error→status-code mapping
+internal/reqid/                    request id (X-Request-Id) generation and validation, for log correlation
 internal/repository/               connections, migrations, single-table SQL
 internal/service/                  business rules, page normalization
 internal/handler/                  the HTTP adapter: binding, validation, responses
-internal/middleware/               logging, rate limiting, body limit, cache headers
+internal/middleware/               logging, security headers, rate limiting, body limit, cache headers
 internal/httpserver/               route assembly, static asset hosting + SPA fallback
 ```
 
@@ -307,8 +319,7 @@ The complete 12-step recipe for adding a resource is in that same document.
 
 ## Not implemented yet
 
-- **Login-failure lockout**: today only a login log is written; failures are not counted and accounts are not locked
-- **List export**: users and operation logs now export (users also import CSV); roles and login logs still do not
+- **List export**: users, roles, operation logs and login logs all export now (users also import CSV); menus, files, jobs, sessions and the API list still do not
 
 The `devices` sample resource has been removed: under a fail-closed permission model it would either pollute the
 production permission list or leave behind a permissionless CRUD endpoint, and neither belongs in a release.

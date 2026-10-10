@@ -15,6 +15,11 @@ type User struct {
 	Email     string     `json:"email"`
 	LoginIP   string     `json:"login_ip"`
 	LoginAt   *time.Time `json:"login_at"` // nil 表示从未登录
+
+	// 登录失败锁定的内部状态。两者都不出现在响应里（json:"-"）：
+	// 暴露 failed_count 等于告诉攻击者还差几次，暴露 locked_until 则给了精确的倒计时。
+	FailedCount int        `json:"-"`
+	LockedUntil *time.Time `json:"-"` // nil 表示未锁定
 }
 
 func (u *User) IsActive() bool { return u.Status == StatusActive }

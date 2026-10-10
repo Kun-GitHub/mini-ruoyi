@@ -23,22 +23,34 @@ func NewLogHandler(logs *service.LogService) *LogHandler {
 
 func (h *LogHandler) ListLoginLogs(c *gin.Context) {
 	page, pageSize := pageParams(c)
-	start, end, err := dateRange(c)
+	filter, err := loginLogFilter(c)
 	if err != nil {
 		return
 	}
 
-	result, err := h.logs.ListLoginLogs(c.Request.Context(), repository.LoginLogFilter{
-		Username: c.Query("username"),
-		Status:   c.Query("status"),
-		Start:    start,
-		End:      end,
-	}, page, pageSize)
+	result, err := h.logs.ListLoginLogs(c.Request.Context(), filter, page, pageSize)
 	if err != nil {
 		httpx.FailFromError(c, err)
 		return
 	}
 	httpx.Success(c, result)
+}
+
+// loginLogFilter 解析登录日志列表与导出共用的筛选条件。
+//
+// 与列表共用一份的目的同操作日志：导出的文件必须与屏幕上的筛选一致，
+// 否则用户会以为导出漏了数据。失败时已写好 400 响应，调用方直接 return。
+func loginLogFilter(c *gin.Context) (repository.LoginLogFilter, error) {
+	start, end, err := dateRange(c)
+	if err != nil {
+		return repository.LoginLogFilter{}, err
+	}
+	return repository.LoginLogFilter{
+		Username: c.Query("username"),
+		Status:   c.Query("status"),
+		Start:    start,
+		End:      end,
+	}, nil
 }
 
 func (h *LogHandler) ListOperLogs(c *gin.Context) {
@@ -99,4 +111,31 @@ func operLogFilter(c *gin.Context) (repository.OperLogFilter, error) {
 		Start:    start,
 		End:      end,
 	}, nil
+}
+
+// loginLogExportHeader 是导出登录日志的列。
+//
+// reason 是 i18n 键（如 error.badCredentials），导出的就是键本身：
+// 导出的文件要能被程序再解析，翻成中文反而丢了结构。列名与 sys_login_logs
+// 的列名一致。
+var loginLogExportHeader = []string{
+	"created_at", "username", "status", "reason", "ip", "user_agent",
+}
+
+// ExportLoginLogs 把登录日志按当前筛选条件导出成 CSV。
+func (h *LogHandler) ExportLoginLogs(c *gin.Context) {
+	filter, err := loginLogFilter(c)
+	if err != nil {
+		return
+	}
+	logs := h.logs
+	streamCSV(c, csvFilename("login-logs", time.Now()), loginLogExportHeader,
+		func(ctx context.Context, page, size int) (service.Page[domain.LoginLog], error) {
+			return logs.ListLoginLogs(ctx, filter, page, size)
+		},
+		func(l domain.LoginLog) []string {
+			return []string{
+				csvTime(l.CreatedAt), l.Username, l.Status, l.Reason, l.IP, l.UserAgent,
+			}
+		})
 }

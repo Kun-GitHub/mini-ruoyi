@@ -53,6 +53,8 @@
 | `email` | `varchar(64)` | NOT NULL, DEFAULT `''` | |
 | `login_ip` | `varchar(64)` | NOT NULL, DEFAULT `''` | 登录时写入 |
 | `login_at` | `datetime` | NULL | NULL 表示从未登录。**不用 `0` 表示"从未"**，那是两种不同的数据 |
+| `failed_count` | `INTEGER` | NOT NULL, DEFAULT `0` | 连续登录失败次数，成功登录即清零（0013 迁移） |
+| `locked_until` | `datetime` | NULL | 登录锁定到期时间，NULL 表示未锁定。到期后由下一次登录尝试清零并解锁 |
 
 不设软删除。用户"删除"即物理删除；要保留访问记录就用 `status = 'inactive'` 停用。
 代价是删除不可撤销——这是为换取"每条 SELECT 都不必带 `deleted_at IS NULL`"付的价。
@@ -269,7 +271,10 @@ CREATE TABLE sys_users (
     mobile     varchar(20)  NOT NULL DEFAULT '',
     email      varchar(64)  NOT NULL DEFAULT '',
     login_ip   varchar(64)  NOT NULL DEFAULT '',
-    login_at   datetime     NULL
+    login_at   datetime     NULL,
+    -- 以下两列由 0013 登录失败锁定迁移追加
+    failed_count INTEGER NOT NULL DEFAULT 0,
+    locked_until datetime NULL
 );
 
 CREATE TABLE sys_roles (
@@ -469,7 +474,7 @@ INSERT (parent_id) VALUES(NULL)→ parent_id = NULL  (typeof=null)
 
 所以"既可空又有默认值 0"是自相矛盾的，查询"根节点"时必须同时处理两者。
 本 schema 的做法是**只允许一种**：`parent_id` 用 NULL（见 §3.3），
-`login_at` 用 NULL，其余字符串字段用 `NOT NULL DEFAULT ''`。
+`login_at`、`locked_until` 用 NULL，其余字符串字段用 `NOT NULL DEFAULT ''`。
 
 ### 6.5 其他
 
@@ -613,7 +618,7 @@ func (s *AuthzService) allowed(u *domain.User, code string) bool {
 | --- | --- | --- |
 | `id bigint` | `id INTEGER PRIMARY KEY AUTOINCREMENT` | 雪花 ID 是 64 位（~1.8e18），超过 JS `Number.MAX_SAFE_INTEGER`（9007199254740991），前端 `JSON.parse` 会**静默截断**，回传后端必然 404。且单机 SQLite 下雪花本来就没有收益 |
 | `timestamptz` | `datetime` | 实测无法扫进 `time.Time`（§6.1） |
-| `status` 三态 | 两态 | `suspended` 在整个 schema 里没有任何产生方（没有登录失败计数、没有锁定机制） |
+| `status` 三态 | 两态 | `suspended` 在整个 schema 里没有任何产生方。登录失败锁定后来补上了，但它走的是 `failed_count` + `locked_until` 两列（§3.1），与 `status` 正交：一个是「暂时别进来」，一个是「这个账号还用不用」 |
 | `menu_type` 三态（含 button） | 两态 | `button` 型的功能已被权限码取代 |
 | `sys_menus.name` | `sys_menus.title_key` | 菜单必须对应前端页面，本质是部署期配置；存字符串会让菜单只能是单语言，与已建的双语前端冲突 |
 | `sys_role_apis` | `sys_role_perms` | 不再引用 `sys_apis.id`，直接存权限码 |
@@ -625,6 +630,7 @@ func (s *AuthzService) allowed(u *domain.User, code string) bool {
 | `sys_roles.code` | 代码要识别内置管理员角色，而 `id` 是自增值，不同环境不同值 |
 | `sys_roles.remark` | 原设计没有。角色数量少且长期存在，需要一个地方记录“为什么会有这个角色” |
 | `sys_menus.sort` | 菜单顺序是用户直接能感知的，靠自增 id 排序是碰运气 |
+| `sys_users.failed_count` `locked_until` | 连续登录失败到阈值后临时拒之门外（0013）。状态落在用户行上，而不是逐条记失败的表——要回答的问题只有「这个账号现在能不能登录」 |
 
 ## 10. 种子数据
 
@@ -670,7 +676,6 @@ func (s *AuthzService) allowed(u *domain.User, code string) bool {
 
 | 项 | 说明 |
 | --- | --- |
-| 登录失败锁定 | 若要做，`status` 可能需要加回 `suspended` 或新增 `locked_until` 字段 |
 | 数据权限（按部门/按人可见范围） | 当前不做。若要做，"部门"需要重新引入，且 `sys_roles` 要加 `data_scope` |
 
 会话表（§3.7）与日志表（§3.8）曾经也在这个表里，现在已经落地，所以不再列出。

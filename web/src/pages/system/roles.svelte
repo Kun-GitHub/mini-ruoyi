@@ -3,7 +3,11 @@
 
   import { ApiError, api } from '$lib/api/client'
   import { deleteWithConfirm } from '$lib/api/delete'
-  import type { FieldError, Grants, MenuNode, Page, PermCatalogue, Role } from '$lib/api/types'
+  import type { FieldError, Grants, MenuNode, PermCatalogue, Role } from '$lib/api/types'
+  import FilterBar from '$lib/components/filter-bar.svelte'
+  import ListHeader from '$lib/components/list-header.svelte'
+  import Pagination from '$lib/components/pagination.svelte'
+  import TableEmpty from '$lib/components/table-empty.svelte'
   import { Badge } from '$lib/components/ui/badge'
   import { Button } from '$lib/components/ui/button'
   import {
@@ -27,78 +31,19 @@
   } from '$lib/components/ui/table'
   import { fieldErrorOf } from '$lib/i18n/errors'
   import { t, tKey } from '$lib/i18n/index.svelte'
-  import { replaceQuery, route } from '$lib/router.svelte'
+  import { createListState, errKey } from '$lib/list-state.svelte'
   import { notifyError, notifySuccess } from '$lib/stores/notify.svelte'
   import { session } from '$lib/stores/session.svelte'
 
-  const PAGE_SIZE = 20
-
-  /** 分页与筛选是组件本地状态，只在挂载时从 URL 读一次。理由见 users.svelte。 */
-  const initial = new URLSearchParams(route.search)
-  let page = $state(Math.max(1, Number(initial.get('page') ?? 1) || 1))
-  let filters = $state({
-    code: initial.get('code') ?? '',
-    name: initial.get('name') ?? '',
-    status: initial.get('status') ?? '',
+  const list = createListState<Role, 'code' | 'name' | 'status'>({
+    endpoint: '/roles',
+    filterKeys: ['code', 'name', 'status'],
+    exportPath: '/api/v1/roles/export',
   })
-
-  let total = $state(0)
-  let rows = $state<Role[]>([])
-  let loading = $state(false)
 
   onMount(() => {
-    void load()
+    void list.load()
   })
-
-  async function load() {
-    loading = true
-    try {
-      const q = new URLSearchParams()
-      q.set('page', String(page))
-      q.set('page_size', String(PAGE_SIZE))
-      for (const key of ['code', 'name', 'status'] as const) {
-        if (filters[key]) q.set(key, filters[key])
-      }
-      const res = await api.get<Page<Role>>(`/roles?${q}`)
-      rows = res.list
-      total = res.total
-      if (res.page !== page) {
-        page = res.page
-        syncURL()
-      }
-    } catch (err) {
-      notifyError(errKey(err))
-    } finally {
-      loading = false
-    }
-  }
-
-  function syncURL() {
-    replaceQuery({ ...filters, page: page === 1 ? undefined : page })
-  }
-
-  function search() {
-    page = 1
-    syncURL()
-    void load()
-  }
-
-  function resetFilters() {
-    filters = { code: '', name: '', status: '' }
-    page = 1
-    syncURL()
-    void load()
-  }
-
-  function goPage(target: number) {
-    page = target
-    syncURL()
-    void load()
-  }
-
-  function errKey(err: unknown): string {
-    return err instanceof ApiError ? err.key : 'error.internal'
-  }
 
   // ---- 新建 / 编辑 ----
 
@@ -133,7 +78,7 @@
       }
       notifySuccess('notify.saved')
       formOpen = false
-      await load()
+      await list.load()
     } catch (err) {
       if (err instanceof ApiError) {
         fieldErrors = err.fieldErrors
@@ -199,54 +144,45 @@
       const done = await deleteWithConfirm(`/roles/${role.id}`)
       if (!done) return
       notifySuccess('notify.deleted')
-      if (rows.length === 1 && page > 1) goPage(page - 1)
-      else await load()
+      await list.refreshAfterDelete()
     } catch (err) {
       notifyError(errKey(err))
     }
   }
 
   let busyID = $state<number | null>(null)
-  const totalPages = $derived(Math.max(1, Math.ceil(total / PAGE_SIZE)))
 </script>
 
 <div class="flex flex-col gap-4">
-  <div data-testid="filters" class="rounded-lg border bg-card p-4">
-    <div class="flex flex-wrap items-end gap-3">
-      <label class="flex w-48 flex-col gap-1.5 text-sm">
-        <span class="text-muted-foreground">{t('role.code')}</span>
-        <Input bind:value={filters.code} onkeydown={(e) => e.key === 'Enter' && search()} />
-      </label>
-      <label class="flex w-48 flex-col gap-1.5 text-sm">
-        <span class="text-muted-foreground">{t('field.name')}</span>
-        <Input bind:value={filters.name} onkeydown={(e) => e.key === 'Enter' && search()} />
-      </label>
-      <label class="flex w-48 flex-col gap-1.5 text-sm">
-        <span class="text-muted-foreground">{t('common.status')}</span>
-        <NativeSelect class="w-full" bind:value={filters.status}>
-          <option value="">{t('common.all')}</option>
-          <option value="active">{t('common.status.active')}</option>
-          <option value="inactive">{t('common.status.inactive')}</option>
-        </NativeSelect>
-      </label>
+  <FilterBar onSearch={list.search} onReset={list.reset}>
+    <label class="flex w-48 flex-col gap-1.5 text-sm">
+      <span class="text-muted-foreground">{t('role.code')}</span>
+      <Input bind:value={list.filters.code} />
+    </label>
+    <label class="flex w-48 flex-col gap-1.5 text-sm">
+      <span class="text-muted-foreground">{t('field.name')}</span>
+      <Input bind:value={list.filters.name} />
+    </label>
+    <label class="flex w-48 flex-col gap-1.5 text-sm">
+      <span class="text-muted-foreground">{t('common.status')}</span>
+      <NativeSelect class="w-full" bind:value={list.filters.status}>
+        <option value="">{t('common.all')}</option>
+        <option value="active">{t('common.status.active')}</option>
+        <option value="inactive">{t('common.status.inactive')}</option>
+      </NativeSelect>
+    </label>
+  </FilterBar>
 
-      <!-- 按钮跟在字段后面，一起换行：字段改成固定宽度后，
-           再把按钮推到最右边会显得很散，而且中间空一大片 -->
-      <div class="flex gap-2">
-        <Button variant="outline" onclick={resetFilters}>{t('common.reset')}</Button>
-        <Button onclick={search}>{t('common.search')}</Button>
-      </div>
-    </div>
-  </div>
-
-  <div class="flex items-center justify-between">
-    <p class="text-sm text-muted-foreground">{t('common.total', { total })}</p>
+  <ListHeader total={list.total}>
+    <Button data-testid="export-roles" variant="outline" size="sm" href={list.exportHref}>
+      {t('common.export')}
+    </Button>
     {#if session.can('system:role:add')}
       <Button size="sm" onclick={() => { editForm = emptyForm(); fieldErrors = []; formOpen = true }}>
         {t('common.create')}
       </Button>
     {/if}
-  </div>
+  </ListHeader>
 
   <div class="rounded-lg border bg-card">
     <Table>
@@ -260,14 +196,10 @@
         </TableRow>
       </TableHeader>
       <TableBody>
-        {#if rows.length === 0}
-          <TableRow>
-            <TableCell colspan={5} class="py-10 text-center text-muted-foreground">
-              {loading ? t('common.loading') : t('common.empty')}
-            </TableCell>
-          </TableRow>
+        {#if list.rows.length === 0}
+          <TableEmpty loading={list.loading} colspan={5} />
         {/if}
-        {#each rows as role (role.id)}
+        {#each list.rows as role (role.id)}
           <TableRow>
             <TableCell class="font-mono text-sm">{role.code}</TableCell>
             <TableCell class="font-medium">
@@ -331,13 +263,7 @@
     </Table>
   </div>
 
-  {#if totalPages > 1}
-    <div class="flex items-center justify-end gap-2 text-sm">
-      <Button variant="outline" size="sm" disabled={page <= 1} onclick={() => goPage(page - 1)}>‹</Button>
-      <span class="text-muted-foreground tabular-nums">{page} / {totalPages}</span>
-      <Button variant="outline" size="sm" disabled={page >= totalPages} onclick={() => goPage(page + 1)}>›</Button>
-    </div>
-  {/if}
+  <Pagination page={list.page} totalPages={list.totalPages} onGo={list.goPage} />
 </div>
 
 <!-- 新建 / 编辑 -->

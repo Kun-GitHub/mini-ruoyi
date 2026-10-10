@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -33,12 +34,21 @@ const (
 )
 
 func main() {
+	// 日志统一走 slog，**在读配置之前**就装好：配置加载失败时的那条 Fatal
+	// 也得是同一个格式，否则最需要看日志的那次失败反而是另一种输出。
+	//
+	// slog.SetDefault 会把标准库 log 的默认 logger 一起接过来
+	// （log.Printf 之后也从同一个 handler 出去），所以本项目里两种写法
+	// 的输出格式一致，不需要一次性改完所有调用点。
+	useSlog(slog.LevelInfo)
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("加载配置: %v", err)
 	}
 	if cfg.Debug() {
 		gin.SetMode(gin.DebugMode)
+		useSlog(slog.LevelDebug)
 	} else {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -166,6 +176,18 @@ func main() {
 		log.Fatalf("server forced to shutdown: %s", err)
 	}
 	log.Println("server exited")
+}
+
+// useSlog 把默认 logger 换成输出到 stderr 的 TextHandler。
+//
+// 用 TextHandler（logfmt）而不是 JSON：1C1G 上日志是给人直接看的，
+// `level=ERROR request_id=...` 这样的行 grep 起来与阅读起来都比等长的 JSON
+// 舒服；要被日志系统采集时，logfmt 同样能被所有采集器解析。
+//
+// level 控制的是结构化记录的级别，也顺带控制了走标准库 log 的那些调用点
+// （它们经 SetDefault 转成 Info 级记录）。
+func useSlog(level slog.Level) {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
 }
 
 // verifyPermCodes 校验 sys_role_perms 里出现的权限码都已在代码中声明。

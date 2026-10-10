@@ -1,10 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte'
 
-  import { ApiError, api } from '$lib/api/client'
+  import { api } from '$lib/api/client'
   import type { SessionView } from '$lib/api/types'
   import { Badge } from '$lib/components/ui/badge'
   import { Button } from '$lib/components/ui/button'
+  import ListHeader from '$lib/components/list-header.svelte'
+  import Pagination from '$lib/components/pagination.svelte'
+  import TableEmpty from '$lib/components/table-empty.svelte'
   import {
     Table,
     TableBody,
@@ -14,54 +17,20 @@
     TableRow,
   } from '$lib/components/ui/table'
   import { t } from '$lib/i18n/index.svelte'
-  import { replaceQuery, route } from '$lib/router.svelte'
+  import { createListState, errKey } from '$lib/list-state.svelte'
   import { confirm } from '$lib/stores/confirm.svelte'
   import { notifyError, notifySuccess } from '$lib/stores/notify.svelte'
   import { session } from '$lib/stores/session.svelte'
 
-  const PAGE_SIZE = 20
-
-  const initial = new URLSearchParams(route.search)
-  let page = $state(Math.max(1, Number(initial.get('page') ?? 1) || 1))
-  let rows = $state<SessionView[]>([])
-  let total = $state(0)
-  let loading = $state(false)
-
-  onMount(() => {
-    void load()
+  // 会话列表没有筛选条件：在线会话本来就只有一屏，翻页足够
+  const list = createListState<SessionView, never>({
+    endpoint: '/sessions',
+    filterKeys: [],
   })
 
-  async function load() {
-    loading = true
-    try {
-      const res = await api.get<{
-        list: SessionView[]
-        total: number
-        page: number
-        page_size: number
-      }>(`/sessions?page=${page}&page_size=${PAGE_SIZE}`)
-      rows = res.list
-      total = res.total
-      if (res.page !== page) {
-        page = res.page
-        syncURL()
-      }
-    } catch (err) {
-      notifyError(err instanceof ApiError ? err.key : 'error.internal')
-    } finally {
-      loading = false
-    }
-  }
-
-  function syncURL() {
-    replaceQuery({ page: page === 1 ? undefined : page })
-  }
-
-  function goPage(target: number) {
-    page = target
-    syncURL()
-    void load()
-  }
+  onMount(() => {
+    void list.load()
+  })
 
   async function kick(s: SessionView) {
     const ok = await confirm({
@@ -76,13 +45,11 @@
     try {
       await api.del(`/sessions/${s.token_hash}`)
       notifySuccess('notify.kicked')
-      await load()
+      await list.load()
     } catch (err) {
-      notifyError(err instanceof ApiError ? err.key : 'error.internal')
+      notifyError(errKey(err))
     }
   }
-
-  const totalPages = $derived(Math.max(1, Math.ceil(total / PAGE_SIZE)))
 </script>
 
 <div class="flex flex-col gap-4">
@@ -90,7 +57,7 @@
     <p>{t('session.hint')}</p>
   </div>
 
-  <p class="text-sm text-muted-foreground">{t('common.total', { total })}</p>
+  <ListHeader total={list.total} />
 
   <div class="rounded-lg border bg-card">
     <Table>
@@ -105,14 +72,10 @@
         </TableRow>
       </TableHeader>
       <TableBody>
-        {#if rows.length === 0}
-          <TableRow>
-            <TableCell colspan={6} class="py-10 text-center text-muted-foreground">
-              {loading ? t('common.loading') : t('common.empty')}
-            </TableCell>
-          </TableRow>
+        {#if list.rows.length === 0}
+          <TableEmpty loading={list.loading} colspan={6} />
         {/if}
-        {#each rows as item (item.token_hash)}
+        {#each list.rows as item (item.token_hash)}
           <TableRow>
             <TableCell>
               <span class="font-medium">{item.username}</span>
@@ -150,11 +113,5 @@
     </Table>
   </div>
 
-  {#if totalPages > 1}
-    <div class="flex items-center justify-end gap-2 text-sm">
-      <Button variant="outline" size="sm" disabled={page <= 1} onclick={() => goPage(page - 1)}>‹</Button>
-      <span class="text-muted-foreground tabular-nums">{page} / {totalPages}</span>
-      <Button variant="outline" size="sm" disabled={page >= totalPages} onclick={() => goPage(page + 1)}>›</Button>
-    </div>
-  {/if}
+  <Pagination page={list.page} totalPages={list.totalPages} onGo={list.goPage} />
 </div>

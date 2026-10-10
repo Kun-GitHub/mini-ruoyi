@@ -33,6 +33,7 @@ export const zhCN = {
   'error.invalidParent': '上级节点不合法',
   'error.badCredentials': '用户名或密码错误',
   'error.accountDisabled': '账号已被停用',
+  'error.accountLocked': '登录失败次数过多，账号已被临时锁定，请稍后再试',
   'error.unauthorized': '尚未登录或登录已过期',
   'error.forbidden': '没有操作权限',
   'error.csrfInvalid': '请求校验失败，请刷新页面后重试',

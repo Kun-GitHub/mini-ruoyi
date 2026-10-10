@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -11,16 +11,53 @@ import (
 	"golang.org/x/time/rate"
 
 	"mini-ruoyi/internal/httpx"
+	"mini-ruoyi/internal/reqid"
 )
 
-// RequestLogger 简单耗时日志。生产建议换 zap/slog，这里保持零依赖。
+// RequestID 给每个请求一个 ID，回写到响应头并放进请求上下文。
+//
+// 上游（nginx、网关、探针）传来的 ID 合法就沿用，否则重新生成——
+// 不合法的值会被写进日志行，见 reqid.Valid 的日志注入说明。
+//
+// 放在 RequestLogger 之前：日志是这个 ID 最主要的消费方。
+func RequestID() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := c.GetHeader(reqid.Header)
+		if !reqid.Valid(id) {
+			id = reqid.New()
+		}
+		c.Writer.Header().Set(reqid.Header, id)
+		c.Request = c.Request.WithContext(reqid.WithContext(c.Request.Context(), id))
+		c.Next()
+	}
+}
+
+// RequestLogger 用 slog 记一条结构化的访问日志。
+//
+// 结构化（键值对）而不是拼字符串：`grep "status=500"` 和
+// `grep "request_id=..."` 都能直接用，而拼接出来的那行只能整行匹配。
+// 状态码 ≥500 记为 ERROR，其余记为 INFO——4xx 大多是正常的业务结果
+// （密码错、没权限、资源不存在），按 ERROR 记会让真问题淹没在里面。
+//
+// 耗时用 duration_ms 而不是人类可读的 `1.2s`：前者能直接比较和求和。
 func RequestLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		c.Next()
-		log.Printf("%s %s %d %s",
-			c.Request.Method, c.Request.URL.Path,
-			c.Writer.Status(), time.Since(start))
+
+		attrs := []any{
+			"method", c.Request.Method,
+			"path", c.Request.URL.Path,
+			"status", c.Writer.Status(),
+			"duration_ms", time.Since(start).Milliseconds(),
+			"ip", c.ClientIP(),
+			"request_id", reqid.From(c.Request.Context()),
+		}
+		if c.Writer.Status() >= http.StatusInternalServerError {
+			slog.Error("request", attrs...)
+			return
+		}
+		slog.Info("request", attrs...)
 	}
 }
 

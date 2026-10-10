@@ -1,13 +1,14 @@
 package middleware
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"runtime/debug"
 
 	"github.com/gin-gonic/gin"
 
 	"mini-ruoyi/internal/httpx"
+	"mini-ruoyi/internal/reqid"
 )
 
 // Recovery 是 gin.Recovery() 的替代品。
@@ -22,8 +23,15 @@ import (
 // 这个 500 就完全无从查起。
 func Recovery() gin.HandlerFunc {
 	return gin.CustomRecovery(func(c *gin.Context, recovered any) {
-		log.Printf("panic: %s %s: %v\n%s",
-			c.Request.Method, c.Request.URL.Path, recovered, debug.Stack())
+		// stack 作为独立字段而不是拼进消息：文本里塞多行会让后面的字段
+		// 无法被 logfmt 解析，而堆栈恰恰是最该单独查看的部分。
+		slog.Error("panic",
+			"method", c.Request.Method,
+			"path", c.Request.URL.Path,
+			"panic", recovered,
+			"request_id", reqid.From(c.Request.Context()),
+			"stack", string(debug.Stack()),
+		)
 		httpx.Fail(c, http.StatusInternalServerError, httpx.KeyInternal)
 		c.Abort()
 	})

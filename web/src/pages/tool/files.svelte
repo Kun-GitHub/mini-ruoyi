@@ -1,8 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte'
 
-  import { ApiError, api } from '$lib/api/client'
+  import { api } from '$lib/api/client'
   import type { FileItem, FilePage } from '$lib/api/types'
+  import FilterBar from '$lib/components/filter-bar.svelte'
+  import ListHeader from '$lib/components/list-header.svelte'
+  import Pagination from '$lib/components/pagination.svelte'
+  import TableEmpty from '$lib/components/table-empty.svelte'
   import { Button } from '$lib/components/ui/button'
   import { Input } from '$lib/components/ui/input'
   import {
@@ -14,77 +18,23 @@
     TableRow,
   } from '$lib/components/ui/table'
   import { t } from '$lib/i18n/index.svelte'
-  import { replaceQuery, route } from '$lib/router.svelte'
+  import { createListState, errKey } from '$lib/list-state.svelte'
   import { confirm } from '$lib/stores/confirm.svelte'
   import { notifyError, notifySuccess } from '$lib/stores/notify.svelte'
   import { session } from '$lib/stores/session.svelte'
 
-  const PAGE_SIZE = 20
-
-  /** 与其它列表页一致：分页与筛选是本地状态，挂载时从 URL 读一次。 */
-  const initial = new URLSearchParams(route.search)
-  let page = $state(Math.max(1, Number(initial.get('page') ?? 1) || 1))
-  let filters = $state({
-    name: initial.get('name') ?? '',
-    group: initial.get('group') ?? '',
-  })
-
-  let rows = $state<FileItem[]>([])
-  let total = $state(0)
   let usage = $state({ used: 0, quota: 0, count: 0, max_size: 0 })
-  let loading = $state(false)
+
+  const list = createListState<FileItem, 'name' | 'group', FilePage>({
+    endpoint: '/files',
+    filterKeys: ['name', 'group'],
+    // 用量随列表一起返回，省掉一次往返
+    onResponse: (res) => (usage = res.usage),
+  })
 
   onMount(() => {
-    void load()
+    void list.load()
   })
-
-  async function load() {
-    loading = true
-    try {
-      const q = new URLSearchParams()
-      q.set('page', String(page))
-      q.set('page_size', String(PAGE_SIZE))
-      if (filters.name) q.set('name', filters.name)
-      if (filters.group) q.set('group', filters.group)
-
-      // 用量随列表一起返回，省掉一次往返
-      const res = await api.get<FilePage>(`/files?${q}`)
-      rows = res.list
-      total = res.total
-      usage = res.usage
-      if (res.page !== page) {
-        page = res.page
-        syncURL()
-      }
-    } catch (err) {
-      notifyError(err instanceof ApiError ? err.key : 'error.internal')
-    } finally {
-      loading = false
-    }
-  }
-
-  function syncURL() {
-    replaceQuery({ ...filters, page: page === 1 ? undefined : page })
-  }
-
-  function search() {
-    page = 1
-    syncURL()
-    void load()
-  }
-
-  function resetFilters() {
-    filters = { name: '', group: '' }
-    page = 1
-    syncURL()
-    void load()
-  }
-
-  function goPage(target: number) {
-    page = target
-    syncURL()
-    void load()
-  }
 
   // ---- 上传 ----
 
@@ -106,11 +56,9 @@
       await api.upload<FileItem>('/files', form)
       notifySuccess('notify.uploaded')
       // 上传后回到第一页，新文件按 id 倒序就在最前面
-      page = 1
-      syncURL()
-      await load()
+      list.search()
     } catch (err) {
-      notifyError(err instanceof ApiError ? err.key : 'error.internal')
+      notifyError(errKey(err))
     } finally {
       uploading = false
       // 清空选择，否则同一个文件第二次选不会触发 change
@@ -135,10 +83,9 @@
     try {
       await api.del(`/files/${item.id}`)
       notifySuccess('notify.deleted')
-      if (rows.length === 1 && page > 1) goPage(page - 1)
-      else await load()
+      await list.refreshAfterDelete()
     } catch (err) {
-      notifyError(err instanceof ApiError ? err.key : 'error.internal')
+      notifyError(errKey(err))
     }
   }
 
@@ -150,8 +97,6 @@
     if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
     return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
   }
-
-  const totalPages = $derived(Math.max(1, Math.ceil(total / PAGE_SIZE)))
 </script>
 
 <div class="flex flex-col gap-4">
@@ -166,23 +111,16 @@
     </p>
   </div>
 
-  <div data-testid="filters" class="rounded-lg border bg-card p-4">
-    <div class="flex flex-wrap items-end gap-3">
-      <label class="flex w-48 flex-col gap-1.5 text-sm">
-        <span class="text-muted-foreground">{t('file.name')}</span>
-        <Input bind:value={filters.name} onkeydown={(e) => e.key === 'Enter' && search()} />
-      </label>
-      <label class="flex w-48 flex-col gap-1.5 text-sm">
-        <span class="text-muted-foreground">{t('file.group')}</span>
-        <Input bind:value={filters.group} onkeydown={(e) => e.key === 'Enter' && search()} />
-      </label>
-
-      <div class="flex gap-2">
-        <Button variant="outline" onclick={resetFilters}>{t('common.reset')}</Button>
-        <Button onclick={search}>{t('common.search')}</Button>
-      </div>
-    </div>
-  </div>
+  <FilterBar onSearch={list.search} onReset={list.reset}>
+    <label class="flex w-48 flex-col gap-1.5 text-sm">
+      <span class="text-muted-foreground">{t('file.name')}</span>
+      <Input bind:value={list.filters.name} />
+    </label>
+    <label class="flex w-48 flex-col gap-1.5 text-sm">
+      <span class="text-muted-foreground">{t('file.group')}</span>
+      <Input bind:value={list.filters.group} />
+    </label>
+  </FilterBar>
 
   {#if session.can('tool:file:upload')}
     <div class="flex flex-wrap items-end gap-3 rounded-lg border bg-card p-4">
@@ -209,7 +147,7 @@
     </div>
   {/if}
 
-  <p class="text-sm text-muted-foreground">{t('common.total', { total })}</p>
+  <ListHeader total={list.total} />
 
   <div class="rounded-lg border bg-card">
     <Table>
@@ -224,14 +162,10 @@
         </TableRow>
       </TableHeader>
       <TableBody>
-        {#if rows.length === 0}
-          <TableRow>
-            <TableCell colspan={6} class="py-10 text-center text-muted-foreground">
-              {loading ? t('common.loading') : t('common.empty')}
-            </TableCell>
-          </TableRow>
+        {#if list.rows.length === 0}
+          <TableEmpty loading={list.loading} colspan={6} />
         {/if}
-        {#each rows as item (item.id)}
+        {#each list.rows as item (item.id)}
           <TableRow>
             <TableCell class="max-w-72 truncate font-medium" title={item.original_name}>
               {item.original_name}
@@ -265,11 +199,5 @@
     </Table>
   </div>
 
-  {#if totalPages > 1}
-    <div class="flex items-center justify-end gap-2 text-sm">
-      <Button variant="outline" size="sm" disabled={page <= 1} onclick={() => goPage(page - 1)}>‹</Button>
-      <span class="text-muted-foreground tabular-nums">{page} / {totalPages}</span>
-      <Button variant="outline" size="sm" disabled={page >= totalPages} onclick={() => goPage(page + 1)}>›</Button>
-    </div>
-  {/if}
+  <Pagination page={list.page} totalPages={list.totalPages} onGo={list.goPage} />
 </div>

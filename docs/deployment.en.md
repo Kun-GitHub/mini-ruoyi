@@ -179,7 +179,8 @@ Users get the new version on refresh (`index.html` is `no-cache` and `assets/*` 
 | --- | --- |
 | Opening `:8080` shows `{"code":404,"msg":"error.frontendDisabled"}` | The backend is in API-only mode and did not find the `web/` directory. Look for the "前端目录 ... 不存在" line in the startup log |
 | The frontend says it cannot reach the backend | The backend is not running, or the proxy is misconfigured. The browser console prints the actual HTTP status and response body |
-| An endpoint returns 500 | `journalctl -u mini-ruoyi`. Every 500 goes into the log in full; the client only gets a key |
+| An endpoint returns 500 | `journalctl -u mini-ruoyi`. Every 500 goes into the log in full; the client only gets a key. The `request_id` field on the log line is the same value as the `X-Request-Id` response header |
+| Pulling together every log line for one request | Filter by `request_id=<id>`. The access log, the 5xx error and the panic are separate records that share one id for the same request; for a user report, ask them for the `X-Request-Id` response header |
 | Everyone gets a 429 at once | There is a proxy in front but `APP_TRUSTED_PROXIES` is unset, so the rate limit went global |
 | The process randomly restarts | `dmesg \| grep -i oom`. Usually a missing `GOMEMLIMIT` |
 | The monitoring page shows the CPU / memory metrics as unsupported | Expected. Those two are read from `/proc` and only exist on Linux. Disk and process metrics work on every platform |

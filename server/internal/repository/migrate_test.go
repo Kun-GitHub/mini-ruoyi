@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -15,7 +16,7 @@ import (
 //
 // 这里写死而不是动态统计：新增迁移时必须显式改这个数字，
 // 从而强制作者想一想「新迁移是否也该有对应的验证」。
-const migrationCount = 11
+const migrationCount = 12
 
 func TestMigrateCreatesSchemaAndIsIdempotent(t *testing.T) {
 	db, err := NewDB(filepath.Join(t.TempDir(), "migrate.db"))
@@ -58,6 +59,20 @@ func TestMigrateCreatesSchemaAndIsIdempotent(t *testing.T) {
 		`INSERT INTO sys_job_logs (job_key, trigger, status) VALUES (?, ?, ?)`,
 		"cleanup:old_logs", "scheduler", domain.JobStatusSuccess); err == nil {
 		t.Error("sys_job_logs.trigger 的 CHECK 没拦住非法触发方式")
+	}
+
+	// 0013 的登录失败锁定列：必须存在、初始为「未锁定」。
+	// 漏掉这次校验的话，列没加上也不报错，直到某次登录 Scan 时才炸
+	// （那时错误出现在登录接口，而不是启动阶段）。
+	var failedCount int
+	var lockedUntil *time.Time
+	if err := db.QueryRowContext(ctx,
+		`SELECT failed_count, locked_until FROM sys_users WHERE username = 'admin'`).
+		Scan(&failedCount, &lockedUntil); err != nil {
+		t.Fatalf("读登录失败锁定列: %v", err)
+	}
+	if failedCount != 0 || lockedUntil != nil {
+		t.Errorf("admin 初始状态 = failed_count %d / locked_until %v，期望 0 / NULL", failedCount, lockedUntil)
 	}
 }
 

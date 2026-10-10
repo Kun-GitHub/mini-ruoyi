@@ -79,6 +79,32 @@ func TestMissingAssetIsNotHtml(t *testing.T) {
 	}
 }
 
+// TestSecurityHeadersReachEveryResponse 保证安全头覆盖到静态页面**和** API。
+//
+// 中间件是在 handler 之前登记的，所以理论上每个响应都该带；但一旦有人把它
+// 挪到某个路由组里，或静态服务用 http.FileServer 直接写响应，就会静默丢失——
+// 而丢失的表现只是浏览器控制台的一行警告，界面上什么都看不出来。
+func TestSecurityHeadersReachEveryResponse(t *testing.T) {
+	r, _ := newTestRouter(t)
+
+	for _, tc := range []struct{ name, path string }{
+		{"index.html", "/"},
+		{"SPA 兜底", "/system/user"},
+		{"API 404", "/api/v1/nope"},
+	} {
+		w := get(t, r, tc.path)
+		if got := w.Header().Get("Content-Security-Policy"); !strings.Contains(got, "script-src 'self'") {
+			t.Errorf("%s（%s）的 CSP = %q，缺少 script-src 'self'", tc.name, tc.path, got)
+		}
+		if got := w.Header().Get("X-Frame-Options"); got != "DENY" {
+			t.Errorf("%s（%s）的 X-Frame-Options = %q，期望 DENY", tc.name, tc.path, got)
+		}
+		if got := w.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("%s（%s）的 X-Content-Type-Options = %q，期望 nosniff", tc.name, tc.path, got)
+		}
+	}
+}
+
 // TestNewRouterFailsFastWhenWebDirIncomplete 覆盖「目录存在但部署错了」：
 // 这种情况应该启动即失败，而不是运行期才 404。
 func TestNewRouterFailsFastWhenWebDirIncomplete(t *testing.T) {

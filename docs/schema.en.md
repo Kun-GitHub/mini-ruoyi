@@ -54,6 +54,8 @@ The original design (exported from PostgreSQL) had 10 tables and 89 columns; by 
 | `email` | `varchar(64)` | NOT NULL, DEFAULT `''` | |
 | `login_ip` | `varchar(64)` | NOT NULL, DEFAULT `''` | written at login |
 | `login_at` | `datetime` | NULL | NULL means never logged in. **`0` is not used for "never"**, because those are two different kinds of data |
+| `failed_count` | `INTEGER` | NOT NULL, DEFAULT `0` | consecutive login failures, cleared as soon as a login succeeds (0013 migration) |
+| `locked_until` | `datetime` | NULL | when the login lockout expires; NULL means not locked. Once it has passed, the next login attempt clears it and unlocks the account |
 
 No soft delete. "Deleting" a user is a physical delete; to keep the access history, deactivate with
 `status = 'inactive'`.
@@ -278,7 +280,10 @@ CREATE TABLE sys_users (
     mobile     varchar(20)  NOT NULL DEFAULT '',
     email      varchar(64)  NOT NULL DEFAULT '',
     login_ip   varchar(64)  NOT NULL DEFAULT '',
-    login_at   datetime     NULL
+    login_at   datetime     NULL,
+    -- the following two columns are appended by the 0013 login-lockout migration
+    failed_count INTEGER NOT NULL DEFAULT 0,
+    locked_until datetime NULL
 );
 
 CREATE TABLE sys_roles (
@@ -477,7 +482,7 @@ INSERT (parent_id) VALUES(NULL)→ parent_id = NULL  (typeof=null)
 ```
 
 So "nullable with a default of 0" contradicts itself, and a query for "root nodes" has to handle both. This schema
-allows **only one**: `parent_id` uses NULL (see §3.3), `login_at` uses NULL, and every other string field uses
+allows **only one**: `parent_id` uses NULL (see §3.3), `login_at` and `locked_until` use NULL, and every other string field uses
 `NOT NULL DEFAULT ''`.
 
 ### 6.5 Other
@@ -629,7 +634,7 @@ reused).
 | --- | --- | --- |
 | `id bigint` | `id INTEGER PRIMARY KEY AUTOINCREMENT` | a snowflake id is 64-bit (about 1.8e18), past JS's `Number.MAX_SAFE_INTEGER` (9007199254740991), so the frontend's `JSON.parse` **silently truncates** it and sending it back guarantees a 404. And on a single machine with SQLite, snowflake ids bring no benefit anyway |
 | `timestamptz` | `datetime` | measured: cannot be scanned into `time.Time` (§6.1) |
-| `status` with three states | two states | `suspended` has no producer anywhere in the schema (there is no login-failure counter and no locking mechanism) |
+| `status` with three states | two states | `suspended` has no producer anywhere in the schema. Login-failure lockout was added later, but it goes through the two columns `failed_count` + `locked_until` (§3.1), which are orthogonal to `status`: one means "stay out for now", the other means "is this account still in use" |
 | `menu_type` with three states (including button) | two states | the `button` type's job was taken over by permission codes |
 | `sys_menus.name` | `sys_menus.title_key` | a menu must correspond to a frontend page and is fundamentally deployment-time configuration; storing a string would lock the menu to one language, conflicting with the bilingual frontend already built |
 | `sys_role_apis` | `sys_role_perms` | no longer references `sys_apis.id`; stores the permission code directly |
@@ -641,6 +646,7 @@ reused).
 | `sys_roles.code` | code has to recognize the built-in administrator role, and `id` is an auto-increment value that differs between environments |
 | `sys_roles.remark` | absent from the original design. Roles are few and long-lived, so there needs to be somewhere to record "why does this role exist" |
 | `sys_menus.sort` | menu order is something users perceive directly, and ordering by auto-increment id is a coin flip |
+| `sys_users.failed_count` `locked_until` | temporarily shut an account out once the failure count reaches the threshold (0013). The state lives on the user row rather than in a per-attempt failure table — the only question to answer is "can this account log in right now" |
 
 ## 10. Seed data
 
@@ -686,7 +692,6 @@ missing character once.
 
 | Item | Notes |
 | --- | --- |
-| Login-failure lockout | If added, `status` may need `suspended` back, or a new `locked_until` field |
 | Data permissions (visibility by department or by person) | Not done today. If it is, "departments" have to be reintroduced and `sys_roles` needs a `data_scope` |
 
 The session table (§3.7) and the log tables (§3.8) were once listed here; they have landed, so they are no longer

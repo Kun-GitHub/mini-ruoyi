@@ -32,12 +32,13 @@ make build && make run       # 二进制与前端产物落在 bin/
 
 启动时会自动执行未应用的迁移，并创建 `data.db`（若不存在）。
 
-仓库自带的 `data.db` 是**已经初始化好**的库：迁移记录齐全（`0002`–`0012` 全部已应用），
+仓库自带的 `data.db` 是**已经初始化好**的库：迁移记录齐全（`0002`–`0013` 全部已应用），
 基础数据是 1 个 `admin` 用户 / 1 个内置角色 / 13 个菜单 / 3 个任务，开箱即用。
 
 ⚠️ **这个库同时是开发时的活数据库**（从 `server/` 启动后端时 `database.path` 就是它）。
 登录一次就会写进会话与日志，提交时会一起带上——表现是「别人 clone 下来，在线会话里却有你的记录」。
 **提交前跑一次 `make db-clean`** 即可还原。
+（它也顺手清零登录失败计数——开发时把 `admin` 连错 5 次被锁住，就用这个解锁。）
 
 最终方案是从 `migrations/` + 种子 SQL 重新生成（见 [../docs/architecture.md](../docs/architecture.md) §8），
 那时这个库会被移除，也就不再需要这条注意事项。
@@ -83,7 +84,7 @@ cp config/config.example.yaml config/config.yaml   # 可选，不改也能跑
 启动时会打印当前端点分类：
 
 ```
-已注册 42 个 API 端点（公开 1 / 仅登录 4 / 需权限 37）
+已注册 44 个 API 端点（公开 1 / 仅登录 4 / 需权限 39）
 ```
 
 **认证方式**：登录后服务端下发 `mr_session` cookie（HttpOnly / SameSite=Lax）。
@@ -111,6 +112,7 @@ cp config/config.example.yaml config/config.yaml   # 可选，不改也能跑
 | PUT | `/roles/:id` | `system:role:edit` | |
 | PUT | `/roles/:id/grants` | `system:role:edit` | 覆盖式重设授权 |
 | DELETE | `/roles/:id` | `system:role:delete` | 支持 `?cascade=true` |
+| GET | `/roles/export` | `system:role:list` | 按当前筛选导出 CSV（不导出授权：那是另一份关系表） |
 | GET | `/perms` | `system:perm:list` | 权限清单，按资源分组，**含每个权限码保护的接口**（来自启动时装配的路由表，不查库） |
 | GET | `/users` | `system:user:list` | 分页，支持 `username` / `nickname` / `mobile` / `status` / `role_id` 筛选 |
 | GET | `/users/:id` | `system:user:list` | 含 `role_ids` |
@@ -126,6 +128,7 @@ cp config/config.example.yaml config/config.yaml   # 可选，不改也能跑
 | DELETE | `/sessions/:hash` | `monitor:session:kick` | 踢掉一条会话，对方下次请求即失效 |
 | DELETE | `/users/:id/sessions` | `monitor:session:kick` | 强退某用户全部会话 |
 | GET | `/login-logs` | `monitor:loginlog:list` | 登录日志，支持 `username` / `status` / `start` / `end` 筛选 |
+| GET | `/login-logs/export` | `monitor:loginlog:list` | 按当前筛选导出 CSV（`reason` 是 i18n 键，不是译文） |
 | GET | `/oper-logs` | `monitor:operlog:list` | 操作日志，支持 `username` / `method` / `path` / `start` / `end` 筛选 |
 | GET | `/oper-logs/export` | `monitor:operlog:list` | 按当前筛选导出 CSV（比列表多一列 `user_agent`） |
 | GET | `/files` | `tool:file:list` | 文件列表，响应还带容量用量 |
@@ -207,7 +210,7 @@ curl -b cookie.txt -X DELETE localhost:8080/api/v1/menus/1
 | 409 | `error.hasDependents` / `error.lastAdmin` / `error.duplicate` |
 | 400 | `error.invalidJobCron` / `error.invalidFile` / `error.wrongOldPassword` / `error.passwordTooLong` / `error.importNoFile` / `error.importMissingColumns` / `error.importTooManyRows` / `error.exportTooManyRows` |
 | 413 | `error.bodyTooLarge` / `error.fileTooLarge` / `error.quotaExceeded` |
-| 429 | `error.tooManyRequests` |
+| 429 | `error.tooManyRequests`（按 IP 限流） / `error.accountLocked`（连续登录失败 5 次后锁 10 分钟，锁期内密码正确也进不去） |
 | 500 | `error.internal` |
 | 503 | `error.serviceUnavailable` |
 | 404 | `error.frontendDisabled`（**纯 API 模式**下访问非 API 路径，提示前端未部署） |
@@ -215,7 +218,12 @@ curl -b cookie.txt -X DELETE localhost:8080/api/v1/menus/1
 后端**不会**返回 `error.network` 和 `error.backendUnreachable`——这两个是前端产生的
 （前者表示请求没有任何东西应答，后者表示有响应但不是本服务的信封格式）。
 
-内置限制：请求体上限 1 MiB，按 IP 限流 20 rps（突发 40）。
+内置限制：请求体上限 1 MiB，按 IP 限流 20 rps（突发 40），单账号连续登录失败 5 次锁 10 分钟
+（`auth.MaxLoginFailures` / `auth.LoginLockDuration`，管理员重置密码可立即解锁）。
+
+stdout 日志是 logfmt 结构化格式（`log/slog`）：访问日志带 `method` / `path` / `status` /
+`duration_ms` / `request_id`，≥500 记 ERROR、其余记 INFO。同一次请求的 `request_id` 会回写到响应头
+`X-Request-Id`，上游传来的合法值会被沿用、非法值重新生成（防日志注入）。
 审计日志批量落库，**最多有 2 秒延迟**（原因见 [../docs/architecture.md](../docs/architecture.md) §5.2）。
 保留期由 `APP_LOG_RETENTION_DAYS` 控制，默认 30 天。
 
@@ -282,10 +290,11 @@ cmd/server/main.go                 启动、依赖组装、优雅关闭
 internal/config/                   环境变量 → Config
 internal/domain/                   实体 + 领域错误（最内层）
 internal/httpx/                    响应信封、错误键、错误→状态码映射
+internal/reqid/                    请求 ID（X-Request-Id）生成与校验，供日志关联
 internal/repository/               连接、迁移、单表 SQL
 internal/service/                  业务规则、分页归一化
 internal/handler/                  HTTP 适配：绑定、校验、响应
-internal/middleware/               日志、限流、请求体上限、缓存头
+internal/middleware/               日志、安全头、限流、请求体上限、缓存头
 internal/httpserver/               路由装配、静态资源托管 + SPA 兜底
 ```
 
@@ -297,8 +306,7 @@ internal/httpserver/               路由装配、静态资源托管 + SPA 兜�
 
 ## 尚未实现
 
-- **登录失败锁定**：现在只记登录日志，不累计失败次数、不锁账号
-- **列表导出**：用户与操作日志已有导出（用户还支持 CSV 导入），角色与登录日志还没有
+- **列表导出**：用户、角色、操作日志、登录日志都已支持（用户还支持 CSV 导入）；菜单、文件、任务、会话、API 清单还没有
 
 `devices` 示例资源已移除：在 fail-closed 的权限模型下，它要么污染生产权限清单，
 要么留下一个无权限的 CRUD 接口，两者都不该出现在正式版本里。

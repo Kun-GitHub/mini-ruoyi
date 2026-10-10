@@ -23,6 +23,7 @@ server/
     ├── httpx/response.go           # 统一响应信封、错误键、错误→HTTP 状态码映射
     ├── perm/perm.go                # 权限码常量与分组，不查库
     ├── auth/                       # 密码哈希、会话签发与解析
+    ├── reqid/                      # 请求 ID（X-Request-Id）生成与校验，供日志关联
     ├── repository/
     │   ├── sqlite.go               # 连接与连接池
     │   ├── migrate.go              # 迁移执行器
@@ -39,7 +40,7 @@ server/
     │   └── disk_unix.go · disk_windows.go   # Statfs vs GetDiskFreeSpaceExW
     ├── job/                        # job.go 注册表；defs.go 任务定义
     ├── handler/                    # HTTP 适配：绑定、校验、响应
-    ├── middleware/                 # auth.go 会话与 CSRF；operlog.go 审计；recovery.go 信封化 panic
+    ├── middleware/                 # auth.go 会话与 CSRF；operlog.go 审计；recovery.go 信封化 panic；headers.go 安全头
     └── httpserver/
         ├── router.go               # 路由注册、中间件装配
         ├── registrar.go            # 路由登记入口（公开 / 自助 / 受保护三类）
@@ -55,13 +56,14 @@ domain      →（不依赖任何内部包）
 config      →（不依赖任何内部包）
 system      →（不依赖任何内部包）
 job         →（不依赖任何内部包）
-httpx       → domain
+httpx       → domain, reqid
 perm        →（不依赖任何内部包）
+reqid       →（不依赖任何内部包）
 auth        → domain, repository
 repository  → domain
 service     → auth, domain, job, perm, repository, system
 handler     → auth, domain, httpx, middleware, perm, repository, service
-middleware  → auth, domain, httpx, perm, service
+middleware  → auth, domain, httpx, perm, reqid, service
 httpserver  → handler, httpx, middleware, perm
 ```
 
@@ -72,6 +74,7 @@ httpserver  → handler, httpx, middleware, perm
 | `system` | 采集 CPU / 内存 / 磁盘 / 进程；逐项带 `available` 标记，读不到就说读不到 | 依赖 service / handler |
 | `job` | 定时任务注册表（任务真源在代码，库里只存开关与 cron）；依赖用接口声明在使用方 | 依赖 service / auth（会成环） |
 | `perm` | 权限码常量与分组，不查库 | 依赖任何其他内部包 |
+| `reqid` | 请求 ID 的生成与校验（校验不过就拒用，防日志注入）；httpx 与 middleware 共用，避免两者互相 import | 依赖任何其他内部包 |
 | `auth` | 密码哈希/校验、会话签发与解析 | 依赖 handler / service |
 | `httpx` | 响应信封、错误键、错误→状态码映射 | 依赖 handler / service / repository |
 | `repository` | 单表 SQL，行 ↔ 实体 | 包含业务规则、跨表事务编排 |
@@ -126,31 +129,34 @@ srv.Shutdown(15s)                    优雅关闭
 
 ```
 1. middleware.Recovery()                             panic → 500（仍是信封，不是空 body）
-2. middleware.RequestLogger()                       方法 路径 状态码 耗时
-3. SetTrustedProxies(APP_TRUSTED_PROXIES)           ← 不是中间件，是路由配置，但要早于限流
-4. middleware.BodyLimit(1 MiB)                      请求体上限（排除 /api/v1/files）
-5. middleware.RateLimit(20 rps, burst 40, TTL 3m)   按 IP 限流
-6. middleware.ImmutableAssets("/assets/")           静态资源长缓存头
+2. middleware.RequestID()                           校验/生成 X-Request-Id，回写响应头并放进请求上下文
+3. middleware.RequestLogger()                       方法 路径 状态码 耗时（logfmt，带 request_id）
+4. middleware.SecureHeaders()                       CSP、nosniff、X-Frame-Options 等安全头，对**每个**响应生效
+5. SetTrustedProxies(APP_TRUSTED_PROXIES)           ← 不是中间件，是路由配置，但要早于限流
+6. middleware.BodyLimit(1 MiB)                      请求体上限（排除 /api/v1/files）
+7. middleware.RateLimit(20 rps, burst 40, TTL 3m)   按 IP 限流
+8. middleware.ImmutableAssets("/assets/")           静态资源长缓存头
    ── 路由 ──
    GET  /healthz                                     → SQLite Ping
    /assets/*filepath
-   /api/v1   7→8→9 对整组生效，10 只挂在 protect 注册的路由上
-   │   7. Auth.Require()                             无会话 → 401
-   │   8. Auth.CSRF()                                写请求缺令牌 → 403
-   │   9. middleware.OperationLog(...)                写操作与 401/403 记审计
-   │  10. middleware.RequirePerm(code)                缺权限码 → 403
+   /api/v1   9→10→11 对整组生效，12 只挂在 protect 注册的路由上
+   │   9. Auth.Require()                             无会话 → 401
+   │  10. Auth.CSRF()                                写请求缺令牌 → 403
+   │  11. middleware.OperationLog(...)                写操作与 401/403 记审计
+   │  12. middleware.RequirePerm(code)                缺权限码 → 403
    └── 菜单 / 角色 / 用户 / 权限清单 / 文件 / 任务 / 监控 / 会话 / 日志
    ── NoRoute ──
    /api/* 与 /assets/* → JSON 404；其余 → index.html（SPA 兜底）
 ```
 
-三条顺序约束，动装配顺序前先看这里：
+四条顺序约束，动装配顺序前先看这里：
 
 | 约束 | 为什么 |
 | --- | --- |
 | `SetTrustedProxies` 早于 `RateLimit` | 限流按 `c.ClientIP()` 计数，代理配置比它晚就等于没配 |
 | `Require` 早于 `CSRF` | 先确认「是谁」，令牌才有归属可比 |
 | `OperationLog` 早于 `RequirePerm` | 越权试探（403）也要被记录下来 |
+| `SecureHeaders` 留在最外层 `r.Use` | 挪进路由组就只覆盖那几条路由，而 XSS / 点击劫持瞄准的恰恰是没被想到的响应——包括 panic 兜底和 SPA 页面 |
 
 `RequirePerm` 挂在每条受保护路由上而不是 `r.Use`：权限码本来就是逐路由的，
 装配时自动带上就不可能漏。`httpserver/registrar.go` 只有三个登记入口——
@@ -159,19 +165,19 @@ srv.Shutdown(15s)                    优雅关闭
 
 ### 4.1 路由清单
 
-当前 42 个端点：**1 公开 + 4 自助 + 37 受权限保护**（下表省略 `/api/v1` 前缀）。
+当前 44 个端点：**1 公开 + 4 自助 + 39 受权限保护**（下表省略 `/api/v1` 前缀）。
 
 | 分组 | 端点 |
 | --- | --- |
 | 公开 | `POST /auth/login` |
 | 自助（`self`） | `GET /auth/me`、`POST /auth/logout`、`PUT /profile`、`PUT /profile/password` |
 | 菜单 | `GET /menus`、`GET /menus/:id`、`POST /menus`、`PUT /menus/:id`、`DELETE /menus/:id` |
-| 角色 | `GET /roles`、`GET /roles/:id`、`GET /roles/:id/grants`、`POST /roles`、`PUT /roles/:id`、`PUT /roles/:id/grants`、`DELETE /roles/:id` |
+| 角色 | `GET /roles`、`GET /roles/:id`、`GET /roles/:id/grants`、`POST /roles`、`PUT /roles/:id`、`PUT /roles/:id/grants`、`DELETE /roles/:id`、`GET /roles/export` |
 | 用户 | `GET /users`、`GET /users/:id`、`POST /users`、`PUT /users/:id`、`PUT /users/:id/roles`、`PUT /users/:id/password`、`DELETE /users/:id`、`GET /users/export`、`POST /users/import` |
 | 权限清单 | `GET /perms` |
 | 文件 | `GET /files`、`GET /files/:id/download`、`POST /files`、`DELETE /files/:id` |
 | 任务 | `GET /jobs`、`PUT /jobs/:key`、`POST /jobs/:key/run`、`GET /jobs/:key/logs` |
-| 监控 | `GET /system`、`GET /sessions`、`DELETE /sessions/:hash`、`DELETE /users/:id/sessions`、`GET /login-logs`、`GET /oper-logs`、`GET /oper-logs/export` |
+| 监控 | `GET /system`、`GET /sessions`、`DELETE /sessions/:hash`、`DELETE /users/:id/sessions`、`GET /login-logs`、`GET /login-logs/export`、`GET /oper-logs`、`GET /oper-logs/export` |
 
 读与写的权限码分开声明：「能看」等于「能改」是常见的授权漏洞，所以
 `GET /roles/:id/grants` 用 `list` 码而 `PUT /roles/:id/grants` 用 `edit` 码，
@@ -191,12 +197,20 @@ srv.Shutdown(15s)                    优雅关闭
 `SetTrustedProxies(nil)`，gin 的 `ClientIP()` 会采信客户端自带的 `X-Forwarded-For`，
 限流可以被一行 header 绕过。测试用例 `TestRateLimitIgnoresSpoofedForwardedFor` 覆盖这一点。
 
+**CSP 里两条方向相反的 `*-src`。** `script-src` 必须严格保持 `'self'`——整条策略的收益
+几乎全在它身上，放宽了等于没设（`TestSecureHeaders` 把这一条钉死）。而 `style-src`
+必须保留 `'unsafe-inline'`：Svelte 组件大量用 `style="..."` 属性（`menus.svelte`、
+`metric-bar.svelte`），去掉它页面会直接失去样式。样式能造成的破坏远小于脚本，
+这个妥协是有意的，不是遗漏。
+
 ### 4.3 CSV 导入 / 导出
 
-三个接口：`GET /users/export`、`POST /users/import`、`GET /oper-logs/export`，底下共用 `internal/csvx`
+五个接口：`GET /users/export`、`POST /users/import`、`GET /roles/export`、
+`GET /oper-logs/export`、`GET /login-logs/export`，底下共用 `internal/csvx`
 （零依赖，stdlib 的 `encoding/csv`）。几条不显眼但必须守住的约定：
 
-**导出必须和屏幕一致。** 筛选条件放在 `userFilter(c)` / `operLogFilter(c)` 里由列表与导出共用——
+**导出必须和屏幕一致。** 筛选条件放在 `userFilter(c)` / `roleFilter(c)` / `operLogFilter(c)` /
+`loginLogFilter(c)` 里由列表与导出共用——
 两边各解析一次，迟早会出现「列表筛了角色、导出的却是全表」。导出用 `<a href>` 而不是 fetch + blob：
 下载是浏览器的行为，交给它处理进度与保存位置；fetch 方案多写一堆代码，还要把整份文件读进内存。
 
@@ -219,6 +233,34 @@ srv.Shutdown(15s)                    优雅关闭
 哈希排在最后，所以 `dry_run=1` 查不到「密码太长」（它根本不哈希）——那是确认时才报的 400。
 
 **`?dry_run=1` 只查不写**，报告与真导入完全同形，用来先看一遍「哪几行不合格」。
+
+### 4.4 日志与 request-id
+
+stdout 日志统一走 `log/slog` 的 TextHandler（logfmt），在 `cmd/server/main.go` 的 `useSlog` 里装配：
+`server.env=dev` 时是 DEBUG，否则 INFO。`slog.SetDefault` 会顺带把标准库 `log` 的默认 logger 接到同一个
+handler 上，所以 `auth` / `service` / `job` 里那些还没改成结构化写法的 `log.Printf` 与新写法**输出格式一致**，
+不需要为了统一格式先把四十多处调用点一次迁完。
+
+一条访问日志长这样：
+
+```
+time=2026-10-09T12:00:00.000+08:00 level=INFO msg=request method=POST path=/api/v1/auth/login status=401 duration_ms=48 ip=127.0.0.1 request_id=9f2c1a7b3e5d6a01
+```
+
+四条约定：
+
+- **字段化而不是拼字符串**：`grep status=500`、`grep request_id=...` 都能直接用；
+  拼出来的那行只能整行匹配。
+- **状态码 ≥500 记 ERROR，其余记 INFO**：4xx 大多是正常的业务结果（密码错、没权限、
+  资源不存在），按 ERROR 记会让真问题淹没在噪声里。
+- **`request_id` 来自 `X-Request-Id`**，经 `internal/reqid` 生成/校验。上游（nginx、网关）
+  传来的值必须先过 `reqid.Valid` 再沿用——放行任意字符意味着上游一行
+  `x\nlevel=ERROR msg="..."` 就能往日志里插记录（日志注入）。同一个 ID 会回写到响应头，
+  用户报障时给出它，就能精确定位那一次请求。
+- **panic 单独一条 ERROR，带 `stack` 字段**：Recovery 拦下的 panic 不会让进程退出，
+  没有日志就完全无从查起；堆栈放在字段里而不是拼进消息，否则后面的字段没法被解析。
+
+耗时字段是 `duration_ms`（整数毫秒），可以直接比较与求和，而不是 `1.2s` 这种要解析的字符串。
 
 ## 5. 响应信封（`internal/httpx`）
 
@@ -384,7 +426,7 @@ cd server && go test ./...        # 全部
 go test ./... -run TestNewDB      # 单个
 ```
 
-当前 151 个用例，分布在 21 个测试文件里（`httpserver/fixture_test.go` 是夹具，不算用例）。`handler` / `job` / `auth` / `domain` / `cmd/server`
+当前 164 个用例，分布在 23 个测试文件里（`httpserver/fixture_test.go` 是夹具，不算用例）。`handler` / `job` / `auth` / `domain` / `cmd/server`
 没有独立测试文件——它们的正确性由 `httpserver` 的端到端用例覆盖（handler 的每个分支
 基本都对应一条 HTTP 断言）。
 
@@ -399,16 +441,18 @@ go test ./... -run TestNewDB      # 单个
 | `repository/session_repository_test.go` | **datetime 存储格式**、时间往返、过期清理、按用户踢人、删用户级联 |
 | `httpx/response_test.go` | 错误键唯一且命名规范、前端字典覆盖（含 **client.ts 里写死的那两个前端自产键**）、**后端全部字段名与校验规则都有对应文案键** |
 | `config/config_test.go` | 没有配置文件用默认值、文件部分覆盖、环境变量覆盖文件、未知字段被拒、非法取值被拒、`web.dir` 的候选路径顺序 |
-| `httpserver/static_test.go` | SPA 兜底、缓存头、API 404 返回 JSON、目录不完整时启动失败 |
+| `httpserver/static_test.go` | SPA 兜底、缓存头、API 404 返回 JSON、目录不完整时启动失败、**安全头覆盖到 HTML 与 API 两种响应** |
 | `httpserver/router_test.go` | **公开端点集合的 fail-closed 断言**、**装配遗漏检测**、未登录一律 401、登录/登出全链路、停用用户立刻失效、响应信封、错误键、字段级校验数组、413/404 映射 |
 | `httpserver/rbac_api_test.go` | 权限隔离（有码放行、无码 403）、授权按码精确生效、未知权限码拒绝、409 影响面与 cascade 确认、四条删除守卫、唯一冲突带字段名、重置密码踢会话、非 ASCII 长密码回 400 而不是 500 |
-| `middleware/middleware_test.go` | 限流按 IP、伪造 `X-Forwarded-For` 无效、请求体上限、缓存头只匹配前缀 |
+| `middleware/middleware_test.go` | 限流按 IP、伪造 `X-Forwarded-For` 无效、请求体上限、缓存头只匹配前缀、**安全头齐全且 CSP 的 `script-src` 不被放宽**、**上游 request-id 非法即替换**、**访问日志是结构化且 5xx 记 ERROR** |
+| `reqid/reqid_test.go` | ID 长度与唯一性、**格式校验挡住换行/引号（日志注入）**、context 读写 |
+| `httpserver/login_lockout_test.go` | 连续失败 5 次后**密码正确也进不去**、锁定期登录日志的 `reason` 与响应键一致、**锁定期到期后自动解锁**、成功登录清零计数、**管理员重置密码即刻解锁** |
 | `system/system_test.go` | `/proc/stat` / `meminfo` / `statm` / `loadavg` 的解析（用真实样本）、`guest` 不计两次、单位与不可用标记、非 Linux 平台自报不可用 |
 | `httpserver/monitor_test.go` | 会话列表与踢人、不能踢自己、**强退不存在的用户返回 404**、登录日志记录成败与来源、操作日志记录写操作与 403、**操作日志不含请求体** |
 | `service/job_log_test.go` | 每次执行（成功 / 失败 / 跳过）都留一条记录与触发方式、**两条写库是同一个事务**（第二条失败时 `last_run_at` 不跟着变）、日志按保留期清理且不误删新记录 |
 | `service/log_service_test.go` | **`Flush` 返回时调用之前记下的日志确实已落库**——刷盘与入队同时就绪时 `select` 可能先刷后收，排队的行会漏一轮 |
 | `httpserver/job_logs_test.go` | 执行历史的三层授权（401 / 403 / `tool:job:list` 放行）、**触发一次后历史里真出现那一条**、未注册的 key 返回 404、页码越界钳到最后一页 |
-| `httpserver/users_csv_test.go` | **导入导出的完整行为**：导出跟着筛选走、行数超限报错不截断、干跑只查不写、一行不合格整批不写、文件内重复行报行号、导出的文件能原样导回（含值也不变）、密码超过 72 字节报 400、三个接口的授权（401 / 403） |
+| `httpserver/users_csv_test.go` | **导入导出的完整行为**：导出跟着筛选走、行数超限报错不截断、干跑只查不写、一行不合格整批不写、文件内重复行报行号、导出的文件能原样导回（含值也不变）、密码超过 72 字节报 400、角色与登录日志导出的表头与筛选、**四个导入导出端点的授权（401 / 403）** |
 | `csvx/csv_test.go` | BOM、公式注入转义与它的还原（`Unescape(Escape(x)) == x`）、列数与表头不一致、超限不截断、空文件 |
 | `httpserver/fixture_test.go` | 不是用例，是被各测试复用的夹具（临时库 + 完整路由） |
 | `httpserver/router_test.go` 的 `TestPanicReturnsEnvelope` | **panic 也要返回信封**——空 body 的 500 会让前端把「后端出错」误判成「后端没起来」 |
@@ -454,7 +498,7 @@ CI 是冷缓存所以不受影响；本地请用 `make test` 或 `make check`。
 以新增 `widget` 为例：
 
 1. **实体** — `domain/widget.go`：字段 + JSON tag（字段名就是对外的契约，见 §5.2）
-2. **建表** — `repository/migrations/0013_init_widgets.sql`：现有最大编号是 `0012`，迁移只能往后加
+2. **建表** — `repository/migrations/0014_init_widgets.sql`：现有最大编号是 `0013`，迁移只能往后加
 3. **仓储** — `repository/widget_repository.go`：`List` / `Count` / `GetByID` / `Create` / `Update` / `Delete`，
    判空返回 `domain.ErrNotFound`，唯一性用 `ExistsXxx` 预检
 4. **服务** — `service/widget_service.go`：分页归一化成 `Page[T]`、唯一冲突返回 `domain.Duplicate("字段名")`、

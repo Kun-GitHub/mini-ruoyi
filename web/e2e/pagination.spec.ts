@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-import { filters, loginAsAdmin, openPage, tabBar, unique } from './helpers'
+import { expectToast, filters, loginAsAdmin, openPage, tabBar, unique } from './helpers'
 
 /**
  * 分页之前完全没有 E2E 覆盖。这里造出超过一页的数据，验证：
@@ -93,6 +93,33 @@ test('分页状态进 URL，刷新后还在第二页', async ({ page }) => {
   await page.reload()
   await expect(page.getByText('2 / 2')).toBeVisible()
   await expect(page.getByRole('row').filter({ hasText: PREFIX })).toHaveCount(EXTRA - 20)
+})
+
+test('删完本页最后一条会往前翻一页', async ({ page }) => {
+  // refreshAfterDelete() 的不变量：删掉本页唯一一条时要回退页码，
+  // 否则用户会停在一个空页上，看起来像「数据被删光了」。
+  await filters(page).getByLabel('用户名').fill(PREFIX)
+  await page.getByRole('button', { name: '查询' }).click()
+  await page.getByRole('button', { name: '›' }).click()
+  await expect(page.getByText('2 / 2')).toBeVisible()
+
+  // 第二页只有 2 条
+  await expect(page.getByRole('row').filter({ hasText: PREFIX })).toHaveCount(EXTRA - 20)
+
+  // 先删一条：还剩 21 条，仍然停在第二页
+  const delButton = () =>
+    page.getByRole('row').filter({ hasText: PREFIX }).first().getByRole('button', { name: '删除' })
+  await delButton().click()
+  await expectToast(page, '已删除')
+  await expect(page.getByText('2 / 2')).toBeVisible()
+
+  // 再删掉第二页最后一条：21 → 20 条，第二页已经不存在，必须回到第一页
+  await delButton().click()
+  await expectToast(page, '已删除')
+  await expect(page.getByText(`共 ${EXTRA - 2} 条`)).toBeVisible()
+  await expect(page.getByRole('row').filter({ hasText: PREFIX })).toHaveCount(EXTRA - 2)
+  // 只剩一页时分页器整体隐藏（见上一个用例），所以用「翻页按钮消失」断页码已回到 1
+  await expect(page.getByRole('button', { name: '›' })).toBeHidden()
 })
 
 test('角色列表同样分页', async ({ page }) => {

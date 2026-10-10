@@ -18,12 +18,13 @@ func NewUserRepository(db *sql.DB) *UserRepository {
 }
 
 const userColumns = `id, created_at, updated_at, status, username, password,
-	nickname, mobile, email, login_ip, login_at`
+	nickname, mobile, email, login_ip, login_at, failed_count, locked_until`
 
 func scanUser(s interface{ Scan(...any) error }) (domain.User, error) {
 	var u domain.User
 	err := s.Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt, &u.Status, &u.Username, &u.Password,
-		&u.Nickname, &u.Mobile, &u.Email, &u.LoginIP, &u.LoginAt)
+		&u.Nickname, &u.Mobile, &u.Email, &u.LoginIP, &u.LoginAt,
+		&u.FailedCount, &u.LockedUntil)
 	return u, err
 }
 
@@ -164,12 +165,56 @@ func (r *UserRepository) UpdateProfile(ctx context.Context, u domain.User) error
 }
 
 func (r *UserRepository) UpdatePassword(ctx context.Context, id int64, hash string) error {
+	// 一并清掉登录失败锁定：改密码的人要么是本人（刚验证过旧密码），
+	// 要么是有 resetPwd 权限的管理员，两条路都足以解除「账号被锁」——
+	// 否则管理员重置完密码，那个人依然登不进来，会以为重置没生效。
 	res, err := r.db.ExecContext(ctx,
-		`UPDATE sys_users SET password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, hash, id)
+		`UPDATE sys_users
+		 SET password = ?, failed_count = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ?`, hash, id)
 	if err != nil {
 		return err
 	}
 	return requireAffected(res)
+}
+
+// AddFailedLogin 记一次登录失败，返回**新的**连续失败次数。
+//
+// 自增写在 SQL 里（failed_count + 1）而不是「读出来 +1 再写回」：
+// 并发的两次失败若各读各的，计数会少加一次，阈值就形同虚设。
+// RETURNING 是原子的「自增并告诉我结果」，省掉第二次查询。
+func (r *UserRepository) AddFailedLogin(ctx context.Context, username string) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx,
+		`UPDATE sys_users SET failed_count = failed_count + 1
+		 WHERE username = ? RETURNING failed_count`, username).Scan(&count)
+	if errors.Is(err, sql.ErrNoRows) {
+		// 用户不存在。调用方（登录流程）只在拿到用户之后才调这里，
+		// 所以真出现说明有人绕过了那一步——按 0 处理，不制造一个假的失败记录
+		return 0, nil
+	}
+	return count, err
+}
+
+// SetLoginLock 设置登录锁定的到期时间（传 nil 表示解锁）。
+func (r *UserRepository) SetLoginLock(ctx context.Context, username string, until *time.Time) error {
+	var value any
+	if until != nil {
+		value = toDBTime(*until)
+	}
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE sys_users SET locked_until = ? WHERE username = ?`, value, username)
+	return err
+}
+
+// ClearFailedLogins 清零连续失败计数并解锁。
+//
+// 成功登录时调用：失败计数只对「连续」有意义，密码已经对了，
+// 这一轮尝试到此结束。锁定到期后的解锁也走它（见 auth.SessionService.Login）。
+func (r *UserRepository) ClearFailedLogins(ctx context.Context, username string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE sys_users SET failed_count = 0, locked_until = NULL WHERE username = ?`, username)
+	return err
 }
 
 func (r *UserRepository) Delete(ctx context.Context, id int64) error {

@@ -101,6 +101,7 @@ status, not by `code`.
 | Wrong username or password | 401 | `error.badCredentials` |
 | Built-in resource cannot be changed/deleted | 403 | `error.protected` |
 | Account disabled | 403 | `error.accountDisabled` |
+| Too many failed sign-ins, account temporarily locked (5 failures → 10 minutes) | 429 | `error.accountLocked` |
 | Logged in but missing a permission | 403 | `error.forbidden` |
 | CSRF token missing or mismatched | 403 | `error.csrfInvalid` |
 | Cannot delete the account you are logged in as | 403 | `error.cannotDeleteSelf` |
@@ -444,7 +445,7 @@ error.quotaExceeded         error.invalidFile
 error.wrongOldPassword      error.invalidDate
 error.passwordTooLong       error.importNoFile
 error.importMissingColumns  error.importTooManyRows
-error.exportTooManyRows
+error.exportTooManyRows     error.accountLocked
 # the next two are produced by the frontend only (web/src/lib/api/client.ts); the backend never returns them:
 error.network               # fetch threw: nothing answered at all
 error.backendUnreachable    # something answered but it was not the envelope: a proxy intercepted it, or the backend is not running
@@ -470,6 +471,7 @@ has no constant anywhere on the backend**, so only the second test can catch it.
 | Per-IP rate limit of 20 rps / burst 40 | `middleware.RateLimit` | Keeps a burst from crushing the process; **per IP rather than process-wide**, or one client exhausting the quota would turn every user's request into a 429 |
 | Lazy GC of the limiter (3 minutes) | same | Without it the map grows unbounded with every IP ever seen while being scanned, which is more dangerous than the limiting itself |
 | 1 MiB request body cap | `middleware.BodyLimit` | A single oversized body can blow up 1 GB of memory |
+| 5 consecutive failed sign-ins lock an account for 10 minutes | `auth.SessionService.Login` + `sys_users.failed_count/locked_until` | Logging without locking does almost nothing against password guessing. **The lock is checked before bcrypt** — a locked account is rejected either way, so running bcrypt then only burns CPU, which is exactly the load the attacker is trying to create |
 | SQLite connection pool capped at 4 | `repository.NewDB` | SQLite has one writer; extra connections only add memory and lock waiting |
 | `busy_timeout=5000` | DSN `_pragma` | On a write conflict, wait instead of failing immediately with `SQLITE_BUSY` |
 | WAL + `synchronous=NORMAL` | same | Reads and writes do not block each other, and it is much faster than `FULL` |

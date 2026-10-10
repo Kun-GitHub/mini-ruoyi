@@ -62,8 +62,11 @@ web/
         │   ├── toaster.svelte      # 全局通知
         │   ├── login-form.svelte
         │   ├── metric-bar.svelte · metric-row.svelte   # 监控页的指标条
+        │   ├── filter-bar.svelte · list-header.svelte  # 列表页共用外壳（见 §6.7）
+        │   │   · pagination.svelte · table-empty.svelte
         │   └── ui/                 # shadcn-svelte 组件（badge / button / card / dialog / input / label / native-select / separator / table）
         ├── i18n/               # 见 §4
+        ├── list-state.svelte.ts # 列表状态机：分页 / 筛选 / 加载 / 导出链接（见 §6.7）
         ├── stores/             # session / tabs / notify / confirm（都是 .svelte.ts）
         ├── router.svelte.ts    # 极简路由 + 菜单驱动的页面解析
         └── utils.ts            # cn() 与 Svelte 组件类型工具（由 CLI 生成）
@@ -98,7 +101,7 @@ web/
 
 ```
 src/lib/i18n/
-├── zh-CN.ts          # 唯一真源，as const（当前 310 个键）
+├── zh-CN.ts          # 唯一真源，as const（当前 337 个键）
 ├── en-US.ts          # Record<keyof typeof zhCN, string> → 缺键是编译错误
 ├── index.svelte.ts   # 语言状态（$state）+ t() + 持久化
 └── errors.ts         # 字段级错误的唯一渲染入口：fieldLabel() + validationText() + fieldErrorOf()
@@ -302,6 +305,7 @@ window.addEventListener('vite:preloadError', () => location.reload())
    隐藏页面若持续跟随，切标签会冲掉它自己的筛选条件，还会让它拿着别人的参数重新请求。
    所以列表页的分页/筛选是**组件本地状态**，只在挂载时从 URL 读一次
    （刷新仍然有效），写入是单向的。代价是前进/后退不会回填筛选框。
+   这套状态机统一封装在 `src/lib/list-state.svelte.ts`（见 §6.7），六个列表页共用。
 3. **E2E 的选择器必须限定到可见面板。** 所有打开的标签都在 DOM 里（只是隐藏），
    页面内的 `data-testid` 会同时存在多份——`getByTestId('filters')` 会命中多个并触发
    strict mode 报错。`e2e/helpers.ts` 的 `filters()` 已经限定到
@@ -411,7 +415,36 @@ npx shadcn-svelte@latest add dialog select table
 
 `e2e/form-controls.spec.ts` 钉住了这两条：字段宽度不随视口变化、窄屏时换行而非压扁。
 
-### 6.7 依赖清单说明
+这段标记连同「回车即搜索」（`<form>` 的隐式提交，不必给每个字段绑 keydown）都收在
+`src/lib/components/filter-bar.svelte` 里，列表页只填字段。
+
+### 6.7 列表页的共用外壳
+
+六个列表页（用户 / 角色 / 登录日志 / 操作日志 / 文件 / 会话）原本各自手写一套
+「分页 + 筛选 + 加载态 + 空行 + 导出链接」，约 100 行 × 6 的同构代码。现在拆成两层：
+
+**状态机** `src/lib/list-state.svelte.ts` 的 `createListState({ endpoint, filterKeys, exportPath? })`
+返回 `{ page, filters, rows, total, loading, totalPages, exportHref, load, search, reset, goPage, refreshAfterDelete }`。
+页面只保留「这个列表有哪些字段、哪些按钮」这一层差异。`errKey()` 也从这里导出——
+后端的键是字符串，收窄成 `MessageKey` 一次，比每处 `as` 一次干净。
+
+**四个哑组件** `filter-bar`（见 §6.6）、`list-header`（总数 + 右侧操作区）、`pagination`、
+`table-empty`。它们只收 props 和回调，不碰任何页面状态。
+
+不变量（都有测试兜着）：
+
+- **URL 只在挂载时读一次、只在用户动作时 `replaceQuery`**——多标签语义，见 §5.7 第 2 条。
+- **`data-testid="filters"` 必须是筛选控件的祖先**：`e2e/helpers.ts` 的 `filters()` 和
+  `form-controls.spec.ts` 的像素测量都从它往下找。
+- **`Button` 默认 `type="button"`**：重置按钮照常不提交，搜索按钮显式 `type="submit"`，
+  两者都写在 `filter-bar` 里，页面不用记。
+- **`exportHref` 每次随 `filters` 变**：导出的应该是屏幕上看到的那些行，不是全表。
+- **删完本页最后一条要往前翻**：`refreshAfterDelete()` 内置，别在页面里重写。服务端也会把越界页码钳到最后一页（[architecture.md](architecture.md) §3.3 第 4 条），`load()` 采纳响应里的 `page`，所以漏掉它画面看着仍然对——只是多花一次请求。
+
+没抽 `DataTable`：各页面的列、单元格渲染、行内按钮差异太大，抽了只会多出一层
+`{#if}` 和一堆 props 透传。共用的是**骨架与状态**，不是格子。
+
+### 6.8 依赖清单说明
 
 | 包 | 为什么在 |
 | --- | --- |
@@ -445,9 +478,9 @@ web/dist/assets/*     →  /assets/*，Cache-Control: immutable
 | --- | --- | --- |
 | `index.html` | 0.5 KB | 0.3 KB |
 | `assets/index-*.css` | 42.7 KB | 8.3 KB |
-| `assets/index-*.js` | 324 KB | **93 KB** |
+| `assets/index-*.js` | 316.7 KB | **93 KB** |
 | `assets/*.woff2`（Inter 可变字体全部子集） | 213 KB | — |
-| 总计（12 个文件） | 595 KB | — |
+| 总计（12 个文件） | 587.4 KB | — |
 
 字体是最大的一块。若只面向中英文，可裁成 latin + latin-ext 子集。
 
@@ -483,8 +516,8 @@ npm run build       # 生产构建
 | 层 | 命令 | 覆盖 |
 | --- | --- | --- |
 | 类型与模板 | `npm run check` | svelte-check + tsc |
-| 接口契约 | `make test` | 后端 151 个用例（CGO 无关的正确性都在这层） |
-| 真实交互 | `make test-e2e` | Playwright + Chromium，11 个 spec / 84 个用例 |
+| 接口契约 | `make test` | 后端 164 个用例（CGO 无关的正确性都在这层） |
+| 真实交互 | `make test-e2e` | Playwright + Chromium，11 个 spec / 85 个用例 |
 
 E2E 走 `webServer` 自动起一个**用临时库的后端**，每次运行前清库——
 残留数据会让「共 N 条」这类断言变成依赖执行顺序，非常难查。

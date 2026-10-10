@@ -260,7 +260,7 @@ before committing. (It needs the `sqlite3` CLI; running the project itself does 
 **Implemented**: the layered skeleton, the unified response contract, SQLite connection and migrations, static asset
 hosting, per-IP rate limiting, the frontend toolchain and i18n.
 
-**Backend complete**: authentication (session + CSRF), RBAC authorization (37 permission-protected endpoints, with
+**Backend complete**: authentication (session + CSRF), RBAC authorization (39 permission-protected endpoints, with
 permission codes declared in code and validated at startup), full CRUD for users / roles / menus / permission codes,
 delete confirmation and guards, and versioned migrations.
 The table definitions are in [docs/schema.en.md](docs/schema.en.md) and the endpoints in [server/README.en.md](server/README.en.md).

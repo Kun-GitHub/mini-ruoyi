@@ -236,6 +236,69 @@ func TestExportOperLogs(t *testing.T) {
 	}
 }
 
+// TestExportRolesAndLoginLogs 覆盖角色与登录日志两个导出端点。
+//
+// 两个端点的共同点是筛选必须与列表一致（导出的就是屏幕上的那些行），
+// 所以两段都带筛选参数断言；登录日志另断言 reason 是 i18n 键而非译文——
+// 导出的文件要能被程序再解析，翻成中文反而丢了结构。
+func TestExportRolesAndLoginLogs(t *testing.T) {
+	r, _ := newTestRouter(t)
+	admin := login(t, r, "admin", "admin123")
+
+	submitLogin(t, r, "admin", "wrong-password")
+	if err := testLogSvc.Flush(t.Context()); err != nil {
+		t.Fatalf("刷盘失败: %v", err)
+	}
+
+	w := call(t, r, http.MethodGet, "/api/v1/roles/export?code=admin", "", admin)
+	if w.Code != http.StatusOK {
+		t.Fatalf("角色导出返回 %d，期望 200（%s）", w.Code, w.Body.String())
+	}
+	body := strings.TrimPrefix(w.Body.String(), "\ufeff")
+	recs := readCSV(t, body)
+	if len(recs) < 2 {
+		t.Fatalf("导出的角色只有 %d 行: %s", len(recs), body)
+	}
+	if got, want := strings.Join(recs[0], ","), "id,created_at,updated_at,status,code,name,remark"; got != want {
+		t.Errorf("角色表头 = %q，期望 %q", got, want)
+	}
+	if !strings.Contains(body, "admin") {
+		t.Errorf("筛选 code=admin 后没有导出对应的角色: %s", body)
+	}
+	for _, rec := range recs[1:] {
+		if len(rec) != len(recs[0]) {
+			t.Fatalf("行列数与表头不一致: %v", rec)
+		}
+	}
+
+	w = call(t, r, http.MethodGet, "/api/v1/login-logs/export?status=failed", "", admin)
+	if w.Code != http.StatusOK {
+		t.Fatalf("登录日志导出返回 %d，期望 200（%s）", w.Code, w.Body.String())
+	}
+	body = strings.TrimPrefix(w.Body.String(), "\ufeff")
+	recs = readCSV(t, body)
+	if len(recs) < 2 {
+		t.Fatalf("导出的登录日志只有 %d 行: %s", len(recs), body)
+	}
+	if got, want := strings.Join(recs[0], ","), "created_at,username,status,reason,ip,user_agent"; got != want {
+		t.Errorf("登录日志表头 = %q，期望 %q", got, want)
+	}
+	for _, rec := range recs[1:] {
+		if len(rec) != len(recs[0]) {
+			t.Fatalf("行列数与表头不一致: %v", rec)
+		}
+		if rec[2] != "failed" {
+			t.Errorf("筛选 status=failed 却导出了 %q: %v", rec[2], rec)
+		}
+		if rec[3] == "" {
+			t.Errorf("失败记录缺 reason: %v", rec)
+		}
+	}
+	if !strings.Contains(body, "error.badCredentials") {
+		t.Errorf("reason 应导出 i18n 键而非译文: %s", body)
+	}
+}
+
 // ---------- 导入 ----------
 
 func TestImportUsersCreatesAllRows(t *testing.T) {
@@ -596,7 +659,7 @@ func TestImportUsersRejectsBadRequests(t *testing.T) {
 	})
 }
 
-// TestCSVEndpointsRequirePermission 确认三个新端点都挡在权限后面，
+// TestCSVEndpointsRequirePermission 确认这些导出端点都挡在权限后面，
 // 且没有权限的用户拿到的是 403 而不是「能调但看不到数据」。
 func TestCSVEndpointsRequirePermission(t *testing.T) {
 	r, _ := newTestRouter(t)
@@ -605,7 +668,12 @@ func TestCSVEndpointsRequirePermission(t *testing.T) {
 	createUser(t, r, admin, "nobody", "nobody-password")
 	plain := login(t, r, "nobody", "nobody-password")
 
-	for _, path := range []string{"/api/v1/users/export", "/api/v1/oper-logs/export"} {
+	for _, path := range []string{
+		"/api/v1/users/export",
+		"/api/v1/roles/export",
+		"/api/v1/oper-logs/export",
+		"/api/v1/login-logs/export",
+	} {
 		if w := call(t, r, http.MethodGet, path, "", plain); w.Code != http.StatusForbidden {
 			t.Errorf("无权限 GET %s 返回 %d，期望 403", path, w.Code)
 		}

@@ -76,7 +76,14 @@ func NewRouter(deps Deps) (*gin.Engine, *RouteTable, error) {
 	httpx.RegisterJSONFieldNames()
 
 	r := gin.New()
-	r.Use(middleware.Recovery(), middleware.RequestLogger())
+	r.Use(
+		middleware.Recovery(),
+		// request-id 必须早于 RequestLogger：日志是它最主要的消费方
+		middleware.RequestID(),
+		middleware.RequestLogger(),
+		// 安全头在任何路由之前登记：因此对所有响应生效，包括 404、panic 兜底和静态页面
+		middleware.SecureHeaders(),
+	)
 
 	// 默认为空 = 不信任任何 X-Forwarded-For。
 	// 本服务可以直接对外监听，无条件采信该头会让客户端能伪装成任意 IP，
@@ -141,6 +148,8 @@ func NewRouter(deps Deps) (*gin.Engine, *RouteTable, error) {
 	reg.protect(http.MethodPut, "/roles/:id", perm.SystemRoleEdit, deps.Role.Update)
 	reg.protect(http.MethodPut, "/roles/:id/grants", perm.SystemRoleEdit, deps.Role.SetGrants)
 	reg.protect(http.MethodDelete, "/roles/:id", perm.SystemRoleDelete, deps.Role.Delete)
+	// 导出复用 list：理由同用户导出（见下）
+	reg.protect(http.MethodGet, "/roles/export", perm.SystemRoleList, deps.Role.Export)
 
 	// 权限清单本身要单独授权，不能因为「能进后台」就看到全部权限点
 	reg.protect(http.MethodGet, "/perms", perm.SystemPermList, deps.Perm.Catalogue)
@@ -187,6 +196,7 @@ func NewRouter(deps Deps) (*gin.Engine, *RouteTable, error) {
 	reg.protect(http.MethodGet, "/login-logs", perm.MonitorLoginLogList, deps.Log.ListLoginLogs)
 	reg.protect(http.MethodGet, "/oper-logs", perm.MonitorOperLogList, deps.Log.ListOperLogs)
 	// 日志导出同样复用 list 权限，理由同上：导出的就是列表里那些行
+	reg.protect(http.MethodGet, "/login-logs/export", perm.MonitorLoginLogList, deps.Log.ExportLoginLogs)
 	reg.protect(http.MethodGet, "/oper-logs/export", perm.MonitorOperLogList, deps.Log.ExportOperLogs)
 
 	if err := MountStatic(r, deps.WebDir); err != nil {

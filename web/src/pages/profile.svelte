@@ -7,15 +7,12 @@
   import { Label } from '$lib/components/ui/label'
   import { fieldErrorOf } from '$lib/i18n/errors'
   import { t } from '$lib/i18n/index.svelte'
+  import { errKey } from '$lib/list-state.svelte'
   import { notifyError, notifySuccess } from '$lib/stores/notify.svelte'
   import { bootstrap, session } from '$lib/stores/session.svelte'
 
   // 用户名只读，直接从会话取；编辑字段见下面的 initial 快照
   const user = $derived(session.user)
-
-  function errKey(err: unknown): string {
-    return err instanceof ApiError ? err.key : 'error.internal'
-  }
 
   // ---- 基本资料 ----
 

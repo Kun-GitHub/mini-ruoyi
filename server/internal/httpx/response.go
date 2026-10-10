@@ -9,7 +9,7 @@ package httpx
 
 import (
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"reflect"
 	"strings"
@@ -19,6 +19,7 @@ import (
 	"github.com/go-playground/validator/v10"
 
 	"mini-ruoyi/internal/domain"
+	"mini-ruoyi/internal/reqid"
 )
 
 // 错误键。新增或改名时必须同步前端字典 web/src/lib/i18n/zh-CN.ts。
@@ -43,9 +44,12 @@ const (
 	KeyInvalidParent    = "error.invalidParent"
 	KeyBadCredentials   = "error.badCredentials"
 	KeyAccountDisabled  = "error.accountDisabled"
-	KeyUnauthorized     = "error.unauthorized"
-	KeyForbidden        = "error.forbidden"
-	KeyCSRFInvalid      = "error.csrfInvalid"
+	// KeyAccountLocked 连续登录失败过多、账号被临时锁定（429）。
+	// 同时也是登录日志里那次失败的 reason，所以界面与日志会显示同一句话。
+	KeyAccountLocked = "error.accountLocked"
+	KeyUnauthorized  = "error.unauthorized"
+	KeyForbidden     = "error.forbidden"
+	KeyCSRFInvalid   = "error.csrfInvalid"
 	// KeyBackendUnreachable 表示「响应不是本服务的信封格式」——请求被代理/网关拦下，
 	// 或者后端进程根本没起来。
 	//
@@ -219,6 +223,7 @@ var errorMapping = []struct {
 	{domain.ErrQuotaExceeded, http.StatusRequestEntityTooLarge, KeyQuotaExceeded},
 	{domain.ErrInvalidFile, http.StatusBadRequest, KeyInvalidFile},
 	{domain.ErrBadCredentials, http.StatusUnauthorized, KeyBadCredentials},
+	{domain.ErrAccountLocked, http.StatusTooManyRequests, KeyAccountLocked},
 	{domain.ErrUnauthorized, http.StatusUnauthorized, KeyUnauthorized},
 	{domain.ErrAccountDisabled, http.StatusForbidden, KeyAccountDisabled},
 	{domain.ErrForbidden, http.StatusForbidden, KeyForbidden},
@@ -268,9 +273,15 @@ func FailFromError(c *gin.Context, err error) {
 
 	default:
 		status, key := ErrorStatusKey(err)
-		// 5xx 必须落日志：客户端只会拿到一个错误键，排查只能靠服务端日志
+		// 5xx 必须落日志：客户端只会拿到一个错误键，排查只能靠服务端日志。
+		// request_id 让这条记录能和同一次请求的访问日志、上游日志对上。
 		if status >= http.StatusInternalServerError {
-			log.Printf("%s %s: %v", c.Request.Method, c.Request.URL.Path, err)
+			slog.Error("internal error",
+				"method", c.Request.Method,
+				"path", c.Request.URL.Path,
+				"err", err,
+				"request_id", reqid.From(c.Request.Context()),
+			)
 		}
 		Fail(c, status, key)
 	}

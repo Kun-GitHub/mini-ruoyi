@@ -2,12 +2,12 @@
   import { ApiError, api } from '$lib/api/client'
   import { deleteWithConfirm } from '$lib/api/delete'
   import type { FieldError, Menu, MenuNode } from '$lib/api/types'
+  import TableEmpty from '$lib/components/table-empty.svelte'
   import { Badge } from '$lib/components/ui/badge'
   import { Button } from '$lib/components/ui/button'
   import {
     Dialog,
     DialogContent,
-    DialogDescription,
     DialogFooter,
     DialogHeader,
     DialogTitle,
@@ -25,6 +25,7 @@
   } from '$lib/components/ui/table'
   import { fieldErrorOf } from '$lib/i18n/errors'
   import { t, tKey } from '$lib/i18n/index.svelte'
+  import { errKey } from '$lib/list-state.svelte'
   import { notifyError, notifySuccess } from '$lib/stores/notify.svelte'
   import { session } from '$lib/stores/session.svelte'
 
@@ -45,10 +46,6 @@
   $effect(() => {
     void load()
   })
-
-  function errKey(err: unknown): string {
-    return err instanceof ApiError ? err.key : 'error.internal'
-  }
 
   /** 压平成「深度 + 节点」的列表，用缩进渲染成树形表格。 */
   type Row = { node: MenuNode; depth: number }
@@ -196,11 +193,7 @@
       </TableHeader>
       <TableBody>
         {#if rows.length === 0}
-          <TableRow>
-            <TableCell colspan={7} class="py-10 text-center text-muted-foreground">
-              {loading ? t('common.loading') : t('common.empty')}
-            </TableCell>
-          </TableRow>
+          <TableEmpty {loading} colspan={7} />
         {/if}
         {#each rows as row (row.node.id)}
           <TableRow>

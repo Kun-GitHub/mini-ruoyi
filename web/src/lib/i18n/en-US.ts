@@ -34,6 +34,7 @@ export const enUS: Record<keyof typeof zhCN, string> = {
   'error.invalidParent': 'Invalid parent node',
   'error.badCredentials': 'Incorrect username or password',
   'error.accountDisabled': 'This account has been disabled',
+  'error.accountLocked': 'Too many failed sign-in attempts; this account is temporarily locked. Try again later.',
   'error.unauthorized': 'Not signed in or session expired',
   'error.forbidden': 'You do not have permission for this action',
   'error.csrfInvalid': 'Request validation failed, please refresh and retry',
