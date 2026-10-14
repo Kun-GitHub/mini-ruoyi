@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 // Package system 采集运行状态：CPU、内存、磁盘、进程。
 //
 // 只用标准库：部署目标是 Linux（读 /proc），但开发常在 macOS，

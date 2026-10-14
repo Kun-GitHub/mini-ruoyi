@@ -1,3 +1,4 @@
+<!-- 有问题欢迎联系 hot_kun@hotmail.com -->
 <script lang="ts">
   import { TableCell, TableRow } from '$lib/components/ui/table'
   import { t } from '$lib/i18n/index.svelte'

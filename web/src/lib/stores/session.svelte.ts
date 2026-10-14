@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 import { api, setCsrfToken, setUnauthorizedHandler } from '$lib/api/client'
 import type { MenuNode, SessionPayload, User } from '$lib/api/types'
 import { resetTabs } from '$lib/stores/tabs.svelte'

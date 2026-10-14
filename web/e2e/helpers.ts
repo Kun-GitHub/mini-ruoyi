@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 import { expect, type Page } from '@playwright/test'
 
 export const ADMIN = { username: 'admin', password: 'admin123' }

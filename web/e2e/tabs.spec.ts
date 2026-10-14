@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 import { expect, test } from '@playwright/test'
 
 import { loginAsAdmin, sidebar, tabBar } from './helpers'
@@ -98,6 +99,59 @@ test('标签切换时页面状态保留', async ({ page }) => {
   // 所有标签的页面是同时渲染、用 CSS 隐藏的，所以切回来时输入框内容还在
   await expect(page.getByTestId('filters').getByLabel('用户名')).toHaveValue('admin')
   await expect(page.getByRole('cell', { name: 'admin' })).toBeVisible()
+})
+
+test('刷新页面后标签仍然在', async ({ page }) => {
+  for (const title of ['用户管理', '角色管理', '菜单管理']) {
+    await sidebar(page).getByRole('button', { name: title, exact: true }).click()
+  }
+  await expect(tabBar(page).getByTestId('tab')).toHaveCount(3)
+
+  await page.reload()
+
+  // 标签存在 sessionStorage 里，刷新后应当原样恢复
+  const tabs = tabBar(page).getByTestId('tab')
+  await expect(tabs).toHaveCount(3)
+  await expect(tabs.nth(0)).toHaveText(/用户管理/)
+  await expect(tabs.nth(1)).toHaveText(/角色管理/)
+  await expect(tabs.nth(2)).toHaveText(/菜单管理/)
+})
+
+test('刷新后不重复恢复：标签数量不会翻倍', async ({ page }) => {
+  // 恢复出来的标签与地址栏当前路径重合时，openTab 的幂等性若失效，
+  // 每刷新一次就会多出一个重复标签
+  await sidebar(page).getByRole('button', { name: '用户管理', exact: true }).click()
+  await page.reload()
+  await page.reload()
+
+  await expect(tabBar(page).getByTestId('tab')).toHaveCount(1)
+})
+
+test('登出后刷新，上一个账号的标签不会复活', async ({ page }) => {
+  await sidebar(page).getByRole('button', { name: '用户管理', exact: true }).click()
+  await sidebar(page).getByRole('button', { name: '角色管理', exact: true }).click()
+  await expect(tabBar(page).getByTestId('tab')).toHaveCount(2)
+
+  await page.getByRole('button', { name: '退出登录' }).click()
+
+  // 登出必须把持久化的那份一起清掉。只清内存的话，刷新后
+  // sessionStorage 里的旧标签又回来了——这正是持久化引入的新风险
+  await page.reload()
+  await loginAsAdmin(page)
+
+  await expect(tabBar(page).getByTestId('tab')).toHaveCount(1)
+})
+
+test('storage 内容损坏时退化成空标签，不白屏', async ({ page }) => {
+  await sidebar(page).getByRole('button', { name: '用户管理', exact: true }).click()
+
+  // 形状不对（缺 component）：直接当 Tab 用会让渲染读到 undefined 而白屏
+  await page.evaluate(() => sessionStorage.setItem('mr.tabs', JSON.stringify([{ path: '/x' }])))
+  await page.reload()
+
+  // 应用仍然可用：损坏的那条被丢弃，当前路径自动补回一个标签
+  await expect(sidebar(page)).toBeVisible()
+  await expect(tabBar(page).getByTestId('tab')).toHaveCount(1)
 })
 
 test('登出会清空标签，避免下个账号看到上一个账号的页面', async ({ page }) => {

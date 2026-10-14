@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 // Package perm 是权限码的唯一真源。
 //
 // 权限码声明在路由注册处（见 httpserver），本包提供：

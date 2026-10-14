@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 package domain
 
 // 状态与类型的取值。数据库里的 CHECK 约束与这里必须一致（见 docs/schema.md）。

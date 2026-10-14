@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 // Package config 负责加载配置。
 //
 // 优先级：**环境变量 > 配置文件 > 内置默认值**。

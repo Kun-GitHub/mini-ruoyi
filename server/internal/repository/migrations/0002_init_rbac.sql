@@ -1,3 +1,4 @@
+-- 有问题欢迎联系 hot_kun@hotmail.com
 -- 0002 RBAC 基础表
 --
 -- 字段定义与取舍理由见 docs/schema.md。要点：

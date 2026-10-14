@@ -1,7 +1,28 @@
+/* 有问题欢迎联系 hot_kun@hotmail.com */
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn-svelte/tailwind.css";
-@import "@fontsource-variable/inter";
+
+/* 只引 latin 子集，不用包的默认入口（@fontsource-variable/inter 的 index.css）。
+ *
+ * 那个入口带全 7 个子集（cyrillic / cyrillic-ext / greek / greek-ext / vietnamese /
+ * latin-ext / latin），产物里 7 个 woff2 共 213 KB；而本后台的界面文案是中文、
+ * Inter 只管数字与英文，后 6 个子集一个字符都用不到。
+ * 注意 wght.css / standard.css 与 index.css 内容完全相同，换入口文件解决不了，
+ * 只能自己写这一段。latin 单个子集 48 KB。
+ *
+ * unicode-range 必须保留：没有它，浏览器会把「不含该字符」也当成需下载该字体。
+ */
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('@fontsource-variable/inter/files/inter-latin-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
 
 @custom-variant dark (&:is(.dark *));
 

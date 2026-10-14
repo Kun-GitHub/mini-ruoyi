@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 // Package job 是定时任务的**代码注册表**。
 //
 // 与 internal/perm 是同一个模式：任务的真源在代码里，数据库只存「开关 + cron 表达式」。

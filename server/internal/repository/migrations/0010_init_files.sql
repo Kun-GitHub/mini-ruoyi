@@ -1,3 +1,4 @@
+-- 有问题欢迎联系 hot_kun@hotmail.com
 -- 0010 文件管理
 --
 -- 元数据进库，**文件本体落磁盘**（APP_UPLOAD_DIR）。

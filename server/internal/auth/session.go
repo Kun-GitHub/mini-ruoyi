@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 package auth
 
 import (
@@ -90,6 +91,11 @@ func (s *SessionService) Login(ctx context.Context, username, password, ip, user
 	// 锁定检查排在密码校验之前：锁着的账号即使密码对也进不来，
 	// 那时再跑一次 bcrypt 只是白烧 CPU——而这正是攻击者在制造的负载。
 	// 代价是「账号被锁」会被立刻察觉，但攻击者本来就能自己触发这个状态。
+	//
+	// 判断依据来自数据库而不是进程内存，因此多实例部署时锁定天然共享：
+	// 一个实例把账号锁上，其余实例的下一次登录尝试也会看到。不需要额外协调，
+	// 但前提是它们连同一个库——这个项目是单进程 + 单 SQLite 文件，多实例前
+	// 要先评估 SQLite 的单写者模型（见 docs/deployment.md）。
 	if user.LockedUntil != nil {
 		if now.Before(*user.LockedUntil) {
 			return LoginResult{}, domain.ErrAccountLocked

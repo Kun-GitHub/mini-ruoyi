@@ -1,3 +1,4 @@
+-- 有问题欢迎联系 hot_kun@hotmail.com
 -- 0004 会话表
 --
 -- 认证方案是 Cookie + 服务端 session（见 docs/architecture.md §5 的决策记录），

@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 import type { Component } from 'svelte'
 
 import type { MenuNode } from '$lib/api/types'

@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 import Body from "./table-body.svelte";
 import Caption from "./table-caption.svelte";
 import Cell from "./table-cell.svelte";

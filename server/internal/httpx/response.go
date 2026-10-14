@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 // Package httpx 统一 HTTP 响应信封。
 //
 // 独立成包而非放在 handler 里：middleware 和 httpserver 同样需要写响应

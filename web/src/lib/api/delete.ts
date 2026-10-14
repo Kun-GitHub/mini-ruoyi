@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 import { ApiError, api } from './client'
 
 import { confirm } from '$lib/stores/confirm.svelte'

@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 import { ApiError, api } from '$lib/api/client'
 import type { Page } from '$lib/api/types'
 import type { MessageKey } from '$lib/i18n/index.svelte'

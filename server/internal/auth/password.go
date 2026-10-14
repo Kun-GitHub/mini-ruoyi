@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 // Package auth 负责密码校验与会话管理。
 package auth
 

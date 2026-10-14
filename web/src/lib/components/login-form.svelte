@@ -1,3 +1,4 @@
+<!-- 有问题欢迎联系 hot_kun@hotmail.com -->
 <script lang="ts">
   import { ApiError } from '$lib/api/client'
   import { Button } from '$lib/components/ui/button'

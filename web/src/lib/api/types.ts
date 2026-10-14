@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 /** 与后端 DTO 一一对应的类型。字段名保持后端的 snake_case，不做本地改名。 */
 
 import type { FieldError } from './client'

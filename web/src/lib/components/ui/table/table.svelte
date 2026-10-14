@@ -1,3 +1,4 @@
+<!-- 有问题欢迎联系 hot_kun@hotmail.com -->
 <script lang="ts">
 	import { cn, type WithElementRef } from "$lib/utils.js";
 	import type { HTMLTableAttributes } from "svelte/elements";
@@ -11,7 +12,7 @@
 </script>
 
 <div data-slot="table-container" class="relative w-full overflow-x-auto">
-	<table bind:this={ref} data-slot="table" class={cn("w-full caption-bottom text-xs", className)} {...restProps}>
+	<table bind:this={ref} data-slot="table" class={cn("w-full caption-bottom text-[13px]", className)} {...restProps}>
 		{@render children?.()}
 	</table>
 </div>

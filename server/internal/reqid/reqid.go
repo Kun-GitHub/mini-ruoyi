@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 // Package reqid 生成并透传请求 ID（correlation id）。
 //
 // 独立成包而不是住在 middleware 里：写响应的 httpx 也要能拿到这个 ID，

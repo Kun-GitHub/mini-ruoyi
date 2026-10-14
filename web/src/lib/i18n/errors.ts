@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 import type { FieldError } from '$lib/api/types'
 import { hasMessage, t, type MessageKey } from './index.svelte'
 

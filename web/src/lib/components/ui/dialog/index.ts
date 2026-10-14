@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 import Close from "./dialog-close.svelte";
 import Content from "./dialog-content.svelte";
 import Description from "./dialog-description.svelte";

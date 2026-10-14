@@ -1,3 +1,4 @@
+# 有问题欢迎联系 hot_kun@hotmail.com
 .PHONY: help deps web build clean run test check test-e2e dev-server dev-web db-clean
 
 # Windows 上可执行文件必须带 .exe：不带扩展名的文件 CreateProcess 直接报 ENOENT，

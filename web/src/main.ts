@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 import { mount } from 'svelte'
 import './app.css'
 import App from './App.svelte'

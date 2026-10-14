@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 /** 后端响应体的字段级校验错误，对应 internal/httpx.FieldError。 */
 export type FieldError = {
   field: string

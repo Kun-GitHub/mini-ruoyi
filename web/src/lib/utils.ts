@@ -1,3 +1,4 @@
+// 有问题欢迎联系 hot_kun@hotmail.com
 export { cn } from "cn";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -1,3 +1,4 @@
+<!-- 有问题欢迎联系 hot_kun@hotmail.com -->
 <script lang="ts">
   // 带进度条的指标。自己画而不是引入 shadcn 的 Progress：
   // 一个纯展示的条不值多一个组件依赖。
