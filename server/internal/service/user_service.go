@@ -28,6 +28,9 @@ type CreateUserInput struct {
 	Mobile   string
 	Email    string
 	Status   string
+	// RoleIDs 是要一并绑定的角色。接口和界面都是「一张表单填完」，
+	// 所以建用户和绑角色走同一个事务，不留没角色的半成品账号。
+	RoleIDs []int64
 }
 
 func (s *UserService) List(ctx context.Context, f repository.UserFilter, page, pageSize int) (Page[domain.User], error) {
@@ -83,14 +86,14 @@ func (s *UserService) Create(ctx context.Context, in CreateUserInput) (domain.Us
 		return domain.User{}, fmt.Errorf("hash password: %w", err)
 	}
 
-	created, err := s.repo.Create(ctx, domain.User{
+	created, err := s.repo.CreateWithRoles(ctx, domain.User{
 		Status:   orActive(in.Status),
 		Username: in.Username,
 		Password: hash,
 		Nickname: in.Nickname,
 		Mobile:   in.Mobile,
 		Email:    in.Email,
-	})
+	}, in.RoleIDs)
 	if err != nil {
 		return domain.User{}, fmt.Errorf("create user: %w", err)
 	}
@@ -225,6 +228,14 @@ func (s *UserService) UpdateOwnProfile(ctx context.Context, userID int64, nickna
 }
 
 // SetRoles 重设用户的角色绑定。
+//
+// 重绑也会夺走管理员的权限，所以必须和删除、停用走同一道守卫：
+// 把唯一管理员身上的 admin 角色换成别的（或者换成空列表），
+// 系统就再也没有人能进后台了，而没有任何界面能恢复。
+//
+// 守卫由 ReplaceRoles 在自己的事务里执行（见 repository），
+// 不在这里先查一次：分两步留给并发操作的窗口会让两个管理员
+// 同时认为自己不是最后一个。
 func (s *UserService) SetRoles(ctx context.Context, userID int64, roleIDs []int64) error {
 	if _, err := s.repo.GetByID(ctx, userID); err != nil {
 		return fmt.Errorf("get user %d: %w", userID, err)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"mini-ruoyi/internal/auth"
@@ -241,15 +242,24 @@ func TestRoleBuiltinCannotBeDisabled(t *testing.T) {
 func TestRoleDeleteReportsAffectedUsers(t *testing.T) {
 	f := newRBACFixture(t)
 
-	// 建一个普通角色并绑给 admin 用户
+	// 建一个普通角色并绑给一个普通用户。
+	//
+	// 不能拿内置 admin 来当这个「被影响的用户」：重绑会把它的 admin 角色换掉，
+	// 那等同于弄丢唯一的管理员，会被最后管理员守卫拦下——
+	// 那时的失败与影响面无关，测不出这里想测的东西。
 	role, err := f.roleSvc.Create(f.ctx, domain.Role{
 		Status: domain.StatusActive, Code: "auditor", Name: "审计员",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	admin, _ := f.userSvc.repo.GetByUsername(f.ctx, "admin")
-	if err := f.userSvc.SetRoles(f.ctx, admin.ID, []int64{role.ID}); err != nil {
+	user, err := f.userSvc.Create(f.ctx, CreateUserInput{
+		Username: "auditee", Password: "auditee-pw", Nickname: "被审计的人",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.userSvc.SetRoles(f.ctx, user.ID, []int64{role.ID}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -407,6 +417,212 @@ func TestPaginationBoundaries(t *testing.T) {
 		}
 		if got.List == nil {
 			t.Error("空结果的 list 必须是 [] 而不是 nil")
+		}
+	})
+}
+
+// ---------- 停用角色的实际后果 ----------
+
+// TestDisabledRoleStopsGrantingPermissions 覆盖「停用角色只是改了个字段」这个缺陷。
+//
+// 角色列表上显示「停用」,但菜单/权限查询若不过滤 sys_roles.status,
+// 该角色带来的全部能力仍然放行——停用就成了一个只影响界面的开关。
+func TestDisabledRoleStopsGrantingPermissions(t *testing.T) {
+	f := newRBACFixture(t)
+
+	role, err := f.roleSvc.Create(f.ctx, domain.Role{
+		Status: domain.StatusActive, Code: "auditor2", Name: "审计员",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	menus, err := f.menuSvc.repo.List(f.ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(menus) == 0 {
+		t.Fatal("种子菜单为空,测试没法进行")
+	}
+	if err := f.roleSvc.SetGrants(f.ctx, role.ID, Grants{
+		MenuIDs: []int64{menus[0].ID},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	user, err := f.userSvc.Create(f.ctx, CreateUserInput{
+		Username: "auditee2", Password: "auditee-pw", RoleIDs: []int64{role.ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	before, err := f.menuSvc.TreeForIdentity(f.ctx, Identity{User: user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) == 0 {
+		t.Fatal("停用前应能看到菜单,否则这个测试证明不了任何东西")
+	}
+
+	// 停用角色
+	role.Status = domain.StatusInactive
+	if err := f.roleSvc.Update(f.ctx, role); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := f.menuSvc.TreeForIdentity(f.ctx, Identity{User: user})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 0 {
+		t.Errorf("角色已停用,菜单仍有 %d 项,期望 0", len(after))
+	}
+}
+
+// TestRebindRejectsRemovingLastAdmin 覆盖「角色重绑绕过最后管理员守卫」这个缺陷。
+//
+// 删除和停用都被 guardLastAdmin 拦住了,但 SetRoles 不经过那条路:
+// 把唯一管理员的 admin 角色换成别的(或换成空列表),系统同样再没人能进后台,
+// 而且没有任何界面能把它恢复回来。
+func TestRebindRejectsRemovingLastAdmin(t *testing.T) {
+	f := newRBACFixture(t)
+
+	admin, _ := f.userSvc.repo.GetByUsername(f.ctx, "admin")
+
+	t.Run("换成其它角色被拒", func(t *testing.T) {
+		other, err := f.roleSvc.Create(f.ctx, domain.Role{
+			Status: domain.StatusActive, Code: "viewer", Name: "只读",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.userSvc.SetRoles(f.ctx, admin.ID, []int64{other.ID}); !errors.Is(err, domain.ErrLastAdmin) {
+			t.Errorf("夺走最后一个管理员的 admin 角色应返回 ErrLastAdmin,实际: %v", err)
+		}
+	})
+
+	t.Run("清空角色被拒", func(t *testing.T) {
+		if err := f.userSvc.SetRoles(f.ctx, admin.ID, nil); !errors.Is(err, domain.ErrLastAdmin) {
+			t.Errorf("清空最后一个管理员的角色应返回 ErrLastAdmin,实际: %v", err)
+		}
+	})
+
+	t.Run("保留 admin 角色则放行", func(t *testing.T) {
+		adminRole, _ := f.roleSvc.repo.GetByCode(f.ctx, domain.RoleCodeAdmin)
+		if err := f.userSvc.SetRoles(f.ctx, admin.ID, []int64{adminRole.ID}); err != nil {
+			t.Errorf("仍然保留 admin 角色时应允许,实际: %v", err)
+		}
+	})
+
+	t.Run("还有别的管理员时允许卸任", func(t *testing.T) {
+		adminRole, _ := f.roleSvc.repo.GetByCode(f.ctx, domain.RoleCodeAdmin)
+		second, err := f.userSvc.Create(f.ctx, CreateUserInput{
+			Username: "admin3", Password: "admin3-pw", RoleIDs: []int64{adminRole.ID},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.userSvc.SetRoles(f.ctx, second.ID, nil); err != nil {
+			t.Errorf("还有另一个管理员时应允许卸任,实际: %v", err)
+		}
+	})
+
+	// 并发子用例：两个管理员同时把自己摘成非管理员。
+	//
+	// 如果守卫是「先查管理员人数、再写绑定」两步走，两边都会先看到
+	// 「管理员有 2 个」，各自放行，结果一个管理员都不剩。
+	// 守卫放进 ReplaceRoles 的事务后，SQLite 的单写者模型保证后提交的
+	// 那个看到的是前一个提交后的状态，于是至少留一个人。
+	t.Run("并发卸任至少留下一名管理员", func(t *testing.T) {
+		adminRole, err := f.roleSvc.repo.GetByCode(f.ctx, domain.RoleCodeAdmin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plain, err := f.roleSvc.Create(f.ctx, domain.Role{
+			Status: domain.StatusActive, Code: "plain", Name: "普通",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		second, err := f.userSvc.Create(f.ctx, CreateUserInput{
+			Username: "admin4", Password: "admin4-pw", RoleIDs: []int64{adminRole.ID},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		first, err := f.userSvc.repo.GetByUsername(f.ctx, "admin")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var wg sync.WaitGroup
+		for _, id := range []int64{first.ID, second.ID} {
+			wg.Add(1)
+			go func(userID int64) {
+				defer wg.Done()
+				// 错误无所谓：被守卫拦住和成功提交都是可以接受的结果，
+				// 不能接受的是两个人都摘掉之后没人管得动系统。
+				_ = f.userSvc.SetRoles(f.ctx, userID, []int64{plain.ID})
+			}(id)
+		}
+		wg.Wait()
+
+		admins, err := f.userSvc.repo.CountOtherAdmins(f.ctx, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if admins < 1 {
+			t.Errorf("并发卸任后管理员为 %d 个,应该至少留 1 个", admins)
+		}
+	})
+}
+
+// TestCreateUserBindsRolesAtomically 覆盖「建用户与绑角色是两件事」这个缺陷。
+//
+// 界面上一张表单同时填了账号和角色,后端就必须一次做完:
+// 若是两次请求,第二次失败会留下一个没有任何角色的用户,
+// 用户以为建好了,登进去什么都看不见。
+func TestCreateUserBindsRolesAtomically(t *testing.T) {
+	f := newRBACFixture(t)
+
+	role, err := f.roleSvc.Create(f.ctx, domain.Role{
+		Status: domain.StatusActive, Code: "operator2", Name: "操作员",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	created, err := f.userSvc.Create(f.ctx, CreateUserInput{
+		Username: "withroles", Password: "withroles-pw", RoleIDs: []int64{role.ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	detail, err := f.userSvc.GetDetail(f.ctx, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.RoleIDs) != 1 || detail.RoleIDs[0] != role.ID {
+		t.Errorf("角色应随创建一起绑定,实际 RoleIDs = %v", detail.RoleIDs)
+	}
+
+	t.Run("角色不存在时不留半成品", func(t *testing.T) {
+		_, err := f.userSvc.Create(f.ctx, CreateUserInput{
+			Username: "partial", Password: "partial-pw", RoleIDs: []int64{999999},
+		})
+		if err == nil {
+			t.Fatal("绑定不存在的角色应当报错")
+		}
+		// 事务整体回滚,这个用户名不该被占住
+		exists, existsErr := f.userSvc.repo.ExistsUsername(f.ctx, "partial", 0)
+		if existsErr != nil {
+			t.Fatal(existsErr)
+		}
+		if exists {
+			t.Error("绑定失败后用户不应残留(事务应整体回滚)")
 		}
 	})
 }

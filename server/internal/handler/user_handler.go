@@ -18,6 +18,7 @@ import (
 	"mini-ruoyi/internal/domain"
 	"mini-ruoyi/internal/httpx"
 	"mini-ruoyi/internal/middleware"
+	"mini-ruoyi/internal/perm"
 	"mini-ruoyi/internal/repository"
 	"mini-ruoyi/internal/service"
 )
@@ -42,6 +43,10 @@ type createUserRequest struct {
 	Mobile   string `json:"mobile" binding:"max=20"`
 	Email    string `json:"email" binding:"omitempty,email,max=64"`
 	Status   string `json:"status" binding:"omitempty,oneof=active inactive"`
+	// RoleIDs 随创建一并提交。界面上的角色选择器在同一个弹窗里，
+	// 分成两个请求的话，第二个失败就会留下一个没角色的账号。
+	// 注意：它不是「新增用户」权限能覆盖的能力，见 Create 里的授权检查。
+	RoleIDs []int64 `json:"role_ids"`
 }
 
 func (h *UserHandler) Create(c *gin.Context) {
@@ -50,6 +55,20 @@ func (h *UserHandler) Create(c *gin.Context) {
 		httpx.FailBindError(c, err)
 		return
 	}
+
+	// 角色分配不属于「新增用户」的能力范围。
+	//
+	// 单独的角色接口要 system:user:edit（见 router.go），如果创建时能顺手带上
+	// role_ids，一个只有「新增」权限的账号就能给自己造一个管理员——
+	// 新增权限就变成了提权入口。所以这里要求同样的权限码。
+	if len(req.RoleIDs) > 0 {
+		identity, _ := middleware.IdentityOf(c)
+		if !identity.Can(string(perm.SystemUserEdit)) {
+			httpx.Fail(c, http.StatusForbidden, httpx.KeyForbidden)
+			return
+		}
+	}
+
 	u, err := h.svc.Create(c.Request.Context(), service.CreateUserInput{
 		Username: req.Username,
 		Password: req.Password,
@@ -57,6 +76,7 @@ func (h *UserHandler) Create(c *gin.Context) {
 		Mobile:   req.Mobile,
 		Email:    req.Email,
 		Status:   req.Status,
+		RoleIDs:  req.RoleIDs,
 	})
 	if err != nil {
 		httpx.FailFromError(c, err)

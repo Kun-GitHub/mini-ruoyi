@@ -14,6 +14,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"mini-ruoyi/internal/domain"
+	"mini-ruoyi/internal/paging"
 	"mini-ruoyi/internal/repository"
 )
 
@@ -240,13 +241,19 @@ func (s *SessionService) Logout(ctx context.Context, token string) error {
 }
 
 // List 返回在线会话（未过期的），最近活跃的在前。
+//
+// 分页参数必须和别的列表走同一套规范化：直接把 page / page_size 交给 SQL，
+// 负的 page_size 会变成负数 LIMIT（SQLite 里等于取消限制），
+// 越界的 page 也不会钳到最后一页，前端分页器就拿不到它依赖的服务端页码。
 func (s *SessionService) List(ctx context.Context, page, pageSize int) (SessionPage, error) {
+	page, pageSize = paging.Normalize(page, pageSize)
+
 	total, err := s.sessions.Count(ctx)
 	if err != nil {
 		return SessionPage{}, fmt.Errorf("count sessions: %w", err)
 	}
 
-	offset := (page - 1) * pageSize
+	page, offset := paging.Clamp(page, pageSize, total)
 	list, err := s.sessions.List(ctx, pageSize, offset)
 	if err != nil {
 		return SessionPage{}, fmt.Errorf("list sessions: %w", err)

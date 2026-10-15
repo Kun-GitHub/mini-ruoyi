@@ -32,9 +32,16 @@ type JobService struct {
 	//
 	// 不用 cron 自带的 SkipIfStillRunning 链，是为了能**记录**「被跳过」
 	// 这个事实——否则「为什么今天没跑」只能靠猜。
+	locks map[string]*sync.Mutex
+
+	// mu 保护 entrys，schMu 保护「取消旧调度 + 登记新调度」这个组合。
+	//
+	// 分成两把锁是因为两者要盖的范围不同：只保护 entrys 的读写，
+	// 两个并发 Update 仍然会各自删掉对方的 entry、再各自 add 一个，
+	// 结果就是同一条 cron 在调度器里存在两份，任务按两倍频率跑。
 	mu     sync.Mutex
-	locks  map[string]*sync.Mutex
 	entrys map[string]cron.EntryID
+	schMu  sync.Mutex
 }
 
 func NewJobService(repo *repository.JobRepository, registry *job.Registry) *JobService {
@@ -157,19 +164,36 @@ func (s *JobService) Update(ctx context.Context, key, expr, status, remark strin
 		return fmt.Errorf("任务 %s 的 cron 表达式 %q 非法: %w", key, expr, domain.ErrInvalidJobCron)
 	}
 
-	if err := s.repo.Update(ctx, key, expr, status, remark); err != nil {
-		return fmt.Errorf("更新任务 %s: %w", key, err)
+	// 从这里开始整段持 schMu：读旧值、重排、写库、失败回滚必须是一个整体。
+	//
+	// 只把重排本身锁住是不够的。两个并发保存仍然可以这样交错：
+	//
+	//	A 读旧值 → B 读旧值 → A 重排（调度器=A）→ B 重排（调度器=B）
+	//	→ B 写库（库=B）→ A 写库（库=A）
+	//
+	// 结果是库里写着 A、而调度器实际按 B 在跑，重启后才会莫名其妙地变回来。
+	// 把「读旧值→写库」整段收进同一把锁，这类交错就不存在了。
+	//
+	// 临界区内含两次数据库 IO，会让同时保存不同任务也变成串行。
+	// 这是故意的：保存任务是人工操作、频率极低，换的是“库与调度器永远说同一件事”。
+	s.schMu.Lock()
+	defer s.schMu.Unlock()
+
+	previous, err := s.repo.GetByKey(ctx, key)
+	if err != nil {
+		return fmt.Errorf("读取任务 %s 原配置: %w", key, err)
 	}
 
-	s.unschedule(key)
-	item, err := s.repo.GetByKey(ctx, key)
-	if err != nil {
+	next := domain.Job{Key: key, Cron: expr, Status: status, Remark: remark}
+	if err := s.rescheduleLocked(next); err != nil {
 		return err
 	}
-	if item.IsActive() {
-		if _, err := s.schedule(item); err != nil {
-			return err
+	if err := s.repo.Update(ctx, key, expr, status, remark); err != nil {
+		// 库没改成，就把调度器退回去，不留下“库里旧的、调度器新的”这种分裂
+		if restoreErr := s.rescheduleLocked(previous); restoreErr != nil {
+			log.Printf("恢复任务 %s 的调度失败（库未更新，调度器现在是新配置）: %v", key, restoreErr)
 		}
+		return fmt.Errorf("更新任务 %s: %w", key, err)
 	}
 	return nil
 }
@@ -243,7 +267,56 @@ func (s *JobService) rescheduleAll(ctx context.Context) (int, error) {
 	return count, nil
 }
 
+// rescheduleLocked 按给定配置重建一个任务的调度。调用方必须持有 schMu。
+//
+// 这几步必须是一个整体：一旦两个 Update 并发执行，
+// 「A 取消 → B 取消 → A 添加 → B 添加」这样的交错会让同一个任务
+// 在调度器里留下两个 entry（A 添加的那个 B 不知道），任务按双倍频率触发。
+// 把窗口收窄到一次锁内，就不存在能交错的缝隙。
+//
+// item 由调用方传入而不是从库里读：并发保存时，回读到的可能是别人刚写的值，
+// 于是本次请求“保存成功”但调度器里装的是另一个人的表达式。
+func (s *JobService) rescheduleLocked(item domain.Job) error {
+	if !item.IsActive() {
+		// 停用：没什么可加的，直接拿掉旧 entry。
+		s.unscheduleLocked(item.Key)
+		return nil
+	}
+
+	// 先加新的、成功了再拿掉旧的。
+	//
+	// 反过来（先取消、后添加）的话，一旦 AddFunc 失败，任务就停在那里、
+	// 既不跑也没有下次执行时间——而库里的记录明明是启用的。
+	// 这个顺序下最坏只是在极端情况下多留一个旧 entry，
+	// 由下一次保存清掉；比「任务静静地死掉」好。
+	//
+	// 注意旧 entry 的 id 必须在 scheduleLocked 之前取：那个函数会把
+	// entrys[key] 改写为新 id，再取就只能拿到新的。
+	old, hadOld := s.entrysOf(item.Key)
+	if _, err := s.scheduleLocked(item); err != nil {
+		return err
+	}
+	if hadOld {
+		s.sched.Remove(old)
+	}
+	return nil
+}
+
+// entrysOf 读一份当前 entry 快照。
+func (s *JobService) entrysOf(key string) (cron.EntryID, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id, ok := s.entrys[key]
+	return id, ok
+}
+
 func (s *JobService) schedule(item domain.Job) (cron.EntryID, error) {
+	s.schMu.Lock()
+	defer s.schMu.Unlock()
+	return s.scheduleLocked(item)
+}
+
+func (s *JobService) scheduleLocked(item domain.Job) (cron.EntryID, error) {
 	key := item.Key
 	id, err := s.sched.AddFunc(item.Cron, func() { s.execute(context.Background(), key, domain.JobTriggerCron) })
 	if err != nil {
@@ -256,6 +329,12 @@ func (s *JobService) schedule(item domain.Job) (cron.EntryID, error) {
 }
 
 func (s *JobService) unschedule(key string) {
+	s.schMu.Lock()
+	defer s.schMu.Unlock()
+	s.unscheduleLocked(key)
+}
+
+func (s *JobService) unscheduleLocked(key string) {
 	s.mu.Lock()
 	id, ok := s.entrys[key]
 	delete(s.entrys, key)

@@ -51,8 +51,18 @@
   })
 
   // 只在有 role:list 权限时才去拉角色列表——否则请求必然 403，
-  // 会让一个有 user:add 权限但没有 role:list 的用户看到一堆报错
-  const canPickRoles = $derived(session.can('system:role:list'))
+  // 会让一个有 user:add 权限但没有 role:list 的用户看到一堆报错。
+  const canListRoles = $derived(session.can('system:role:list'))
+  // 能不能把角色分配出去，看的是 user:edit 而不是 role:list。
+  //
+  // 后端就是这么校验的：单独的角色接口（PUT /users/:id/roles）要 user:edit，
+  // 创建用户时顺带提交的 role_ids 同样要 user:edit（否则「新增用户」
+  // 就成了自己给自己造管理员的提权入口）。前端用同一个码，
+  // 界面上能勾选的角色和真正提交成功的范围才一致。
+  const canAssignRoles = $derived(session.can('system:user:edit'))
+  // 角色选择器两者都要：能看清单（role:list）且能分配（user:edit）。
+  // 缺前者就不知道有哪些角色可选，缺后者则提交必被 403。
+  const canPickRoles = $derived(canListRoles && canAssignRoles)
   let roleOptions = $state<Role[]>([])
   let roleTotal = $state(0)
 
@@ -63,7 +73,7 @@
    * 之后新建的角色在挂载时还不存在，缓存的列表会让用户找不到刚建的角色。
    */
   async function loadRoleOptions() {
-    if (!canPickRoles) return
+    if (!canListRoles) return
     try {
       const res = await api.get<Page<Role>>('/roles?page_size=100')
       roleOptions = res.list
@@ -222,19 +232,25 @@
     saving = true
     fieldErrors = []
     try {
-      let userId: number
-
       if (form.id === null) {
-        // 后端返回创建后的完整实体，角色绑定需要它的 id
-        const created = await api.post<User>('/users', {
+        // 角色跟用户名、密码一起放进同一个请求。
+        //
+        // 原来是「POST /users 再 PUT /users/{id}/roles」两步：第二步失败时
+        // 用户已经建好了，只是没有任何角色——界面不会提示，用户以为建好了，
+        // 登进去什么都看不见。后端在同事务里完成建档与绑定（见
+        // UserRepository.CreateWithRoles），这里就不要再拆成两步。
+        //
+        // role_ids 只在有 user:edit 时带上：后端会拿同一个码校验它，
+        // 没权限还硬发的话，用户会看到创建失败，而实际上他只填了账号密码。
+        await api.post<User>('/users', {
           username: form.username,
           password: form.password,
           nickname: form.nickname,
           mobile: form.mobile,
           email: form.email,
           status: form.status,
+          ...(canAssignRoles ? { role_ids: form.roleIDs } : {}),
         })
-        userId = created.id
       } else {
         // username 不可变，后端也不接受它
         await api.put(`/users/${form.id}`, {
@@ -243,18 +259,12 @@
           email: form.email,
           status: form.status,
         })
-        userId = form.id
-      }
 
-      // 角色是在同一个弹窗里选的，**新建时也要绑**。
-      // 之前这里写成 `if (form.id !== null)`，结果是新建时选的角色被静默丢弃，
-      // 既不报错也不生效——用户以为建好了，实际没有角色。
-      //
-      // 新建且没勾任何角色时跳过：这时没有任何东西要删，
-      // 发一个空的绑定请求是纯粹的浪费（每次建用户都多一次往返）。
-      const nothingToBind = form.id === null && form.roleIDs.length === 0
-      if (canPickRoles && !nothingToBind) {
-        await api.put(`/users/${userId}/roles`, { role_ids: form.roleIDs })
+        // 编辑时角色仍单独提交：此时用户已经存在，改角色不影响账号本身的完整性。
+        // 没勾任何角色也要发——那表示「把角色全部拿掉」，是用户的真实意图。
+        if (canAssignRoles) {
+          await api.put(`/users/${form.id}/roles`, { role_ids: form.roleIDs })
+        }
       }
 
       notifySuccess('notify.saved')

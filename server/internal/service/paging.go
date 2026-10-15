@@ -1,7 +1,10 @@
 // 有问题欢迎联系 hot_kun@hotmail.com
 package service
 
-import "mini-ruoyi/internal/domain"
+import (
+	"mini-ruoyi/internal/domain"
+	"mini-ruoyi/internal/paging"
+)
 
 // Page 是所有列表接口的统一分页结构。
 //
@@ -14,43 +17,13 @@ type Page[T any] struct {
 	PageSize int   `json:"page_size"`
 }
 
-// pageSizeMax 与默认值。超出范围时回落到默认值而不是报错——
-// 分页参数是展示细节，为此拒绝整个请求对用户没有好处。
-const (
-	pageSizeDefault = 20
-	pageSizeMax     = 100
-)
+// 分页规则的真源在 internal/paging：会话列表在 auth 包，
+// 而 service 已经导入了 auth，两边没法共用 service 里的实现。
+// 这里保留同名包装，让本包已有的调用点不必全部改前缀。
+func normalizePage(page, pageSize int) (int, int) { return paging.Normalize(page, pageSize) }
 
-func normalizePage(page, pageSize int) (int, int) {
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 {
-		pageSize = pageSizeDefault
-		return page, pageSize
-	}
-	if pageSize > pageSizeMax {
-		// 钳到上限，而不是悄悄换成默认值。
-		// 要 101 条却拿到 20 条，调用方会以为数据只有这么多。
-		pageSize = pageSizeMax
-	}
-	return page, pageSize
-}
-
-// clampPage 把越界的页码钳到最后一页，返回（实际页码, 偏移量）。
-//
-// 不钳的话 `page=99`（共 2 页）会返回空列表，但响应里的 page 仍是 99——
-// 前端分页器就显示 "99 / 2" 这种不可能的状态，点「上一页」还是空白。
-// 钳到最后一页后，一个过期的书签至少还能看到数据。
 func clampPage(page, pageSize int, total int64) (int, int) {
-	if total <= 0 {
-		return 1, 0
-	}
-	last := int((total + int64(pageSize) - 1) / int64(pageSize))
-	if page > last {
-		page = last
-	}
-	return page, (page - 1) * pageSize
+	return paging.Clamp(page, pageSize, total)
 }
 
 // orActive 把空状态补成 active。

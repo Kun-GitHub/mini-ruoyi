@@ -20,6 +20,13 @@ func NewMenuRepository(db *sql.DB) *MenuRepository {
 const menuColumns = `id, created_at, updated_at, status, parent_id, sort,
 	menu_type, title_key, path, component, icon`
 
+// menuColumnsPrefixed 是同一批列的 m. 限定版。
+//
+// 带 JOIN 的查询里必须限定表名：sys_menus 和 sys_roles 都有 id，
+// 裸写 `id` 会被 SQLite 判为 ambiguous column name，报成一个 500。
+const menuColumnsPrefixed = `m.id, m.created_at, m.updated_at, m.status, m.parent_id, m.sort,
+	m.menu_type, m.title_key, m.path, m.component, m.icon`
+
 func scanMenu(s interface{ Scan(...any) error }) (domain.Menu, error) {
 	var m domain.Menu
 	err := s.Scan(&m.ID, &m.CreatedAt, &m.UpdatedAt, &m.Status, &m.ParentID, &m.Sort,
@@ -37,14 +44,18 @@ func (r *MenuRepository) List(ctx context.Context, activeOnly bool) ([]domain.Me
 }
 
 // ListForUser 返回某用户通过角色获得授权的启用菜单。
+//
+// 角色本身也必须是启用的：停用角色后菜单要跟着消失，
+// 否则侧边栏里还留着一个点进去必然 403 的入口。
 func (r *MenuRepository) ListForUser(ctx context.Context, userID int64) ([]domain.Menu, error) {
 	return r.query(ctx, `
-		SELECT DISTINCT `+menuColumns+`
+		SELECT DISTINCT `+menuColumnsPrefixed+`
 		FROM sys_menus m
 		JOIN sys_role_menus rm ON rm.menu_id = m.id
 		JOIN sys_user_roles ur ON ur.role_id = rm.role_id
-		WHERE ur.user_id = ? AND m.status = 'active'
-		ORDER BY m.sort, m.id`, userID)
+		JOIN sys_roles r       ON r.id = ur.role_id
+		WHERE ur.user_id = ? AND m.status = 'active' AND r.status = ?
+		ORDER BY m.sort, m.id`, userID, domain.StatusActive)
 }
 
 func (r *MenuRepository) query(ctx context.Context, q string, args ...any) ([]domain.Menu, error) {

@@ -5,12 +5,15 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"mini-ruoyi/internal/domain"
 	"mini-ruoyi/internal/repository"
@@ -58,21 +61,15 @@ type UploadInput struct {
 //
 // 顺序是**先落文件、再写库**：反过来会留下一堆指向空文件的记录，
 // 用户点下载得到 404；而先落文件最坏只留下孤儿文件，由定时任务回收。
+//
+// 配额判断和登记合成一条 SQL（见 CreateWithinQuota），不再先读一遍总量：
+// 两步之间并发进来的另一个上传会读到同一个 used，两个都以为装得下。
 func (s *FileService) Upload(ctx context.Context, in UploadInput) (domain.File, error) {
 	if in.Size <= 0 {
 		return domain.File{}, fmt.Errorf("文件为空: %w", domain.ErrInvalidFile)
 	}
 	if in.Size > s.maxSize {
 		return domain.File{}, fmt.Errorf("文件 %d 字节超过上限 %d: %w", in.Size, s.maxSize, domain.ErrFileTooLarge)
-	}
-
-	used, _, err := s.repo.Usage(ctx)
-	if err != nil {
-		return domain.File{}, fmt.Errorf("读取已用容量: %w", err)
-	}
-	if s.quota > 0 && used+in.Size > s.quota {
-		return domain.File{}, fmt.Errorf("已用 %d + 本次 %d 超过配额 %d: %w",
-			used, in.Size, s.quota, domain.ErrQuotaExceeded)
 	}
 
 	// 磁盘名一律由我们生成：用户给的名字直接当路径就是路径穿越
@@ -89,7 +86,7 @@ func (s *FileService) Upload(ctx context.Context, in UploadInput) (domain.File, 
 		return domain.File{}, fmt.Errorf("写入文件: %w", err)
 	}
 
-	created, err := s.repo.Create(ctx, domain.File{
+	created, err := s.repo.CreateWithinQuota(ctx, domain.File{
 		GroupName:    in.Group,
 		OriginalName: in.OriginalName,
 		StoragePath:  rel,
@@ -97,11 +94,15 @@ func (s *FileService) Upload(ctx context.Context, in UploadInput) (domain.File, 
 		ContentType:  in.ContentType,
 		UploaderID:   in.Uploader.ID,
 		UploaderName: in.Uploader.Username,
-	})
+	}, s.quota)
 	if err != nil {
-		// 库没写进去，磁盘上的文件就是孤儿——立刻删掉，别等清理任务
+		// 登记失败（含超配额），磁盘上的文件就是孤儿——立刻删掉，别等清理任务。
+		// 配额拒绝也走这里：文件已经落盘了，不能留在那儿占地方。
 		if rmErr := os.Remove(abs); rmErr != nil {
 			log.Printf("上传登记失败后清理文件 %s 也失败: %v", abs, rmErr)
+		}
+		if errors.Is(err, domain.ErrQuotaExceeded) {
+			return domain.File{}, fmt.Errorf("超过配额 %d: %w", s.quota, domain.ErrQuotaExceeded)
 		}
 		return domain.File{}, fmt.Errorf("登记文件: %w", err)
 	}
@@ -219,12 +220,29 @@ func (s *FileService) Usage(ctx context.Context) (domain.FileUsage, error) {
 // MaxSize 供界面提示与上传前的预检。
 func (s *FileService) MaxSize() int64 { return s.maxSize }
 
+// orphanGracePeriod 是孤儿文件的「冷静期」。
+//
+// 上传是「先落盘、后写库」，两步之间那个文件在库里确实不存在。
+// 如果清理任务恰好在这时扫过，它会把一个正在上传的文件删掉，
+// 而上传完成后写进库的记录就指向一个不存在的文件——用户看到上传成功、下载 404。
+//
+// 用时间阈值而不是锁：清理任务与上传分属不同请求、不同进程的可能性都存在，
+// 进程内的锁盖不住。一个文件落盘超过这个时长还没登记，就真的没人会来登记了。
+const orphanGracePeriod = time.Hour
+
 // CleanupOrphans 删除磁盘上没有对应记录的文件，返回删除个数。供定时任务调用。
 //
 // 孤儿只可能来自两处：上传「先落文件后写库」时写库失败（那时会立即尝试删掉），
 // 以及删除时「先删库后删文件」的第二步失败。两处都是「宁可留孤儿」的取舍结果。
 func (s *FileService) CleanupOrphans(ctx context.Context) (int64, error) {
-	known, err := s.repo.AllStoragePaths(ctx)
+	// 先取磁盘清单、再查库：这个顺序下，查库之后才登记的文件不会被漏判成孤儿。
+	// 因为它在库里存在，而库里存在就不会被删。
+	known, err := s.repo.StoragePathsCreatedBefore(ctx, time.Now().Add(-orphanGracePeriod))
+	if err != nil {
+		return 0, fmt.Errorf("读取已知文件列表: %w", err)
+	}
+	// 冷静期内的文件不参与判定，但也不该被删——单独记一份全集用于排除
+	recent, err := s.repo.AllStoragePaths(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("读取已知文件列表: %w", err)
 	}
@@ -245,27 +263,92 @@ func (s *FileService) CleanupOrphans(ctx context.Context) (int64, error) {
 		}
 		rel = filepath.ToSlash(rel)
 
-		// 上传过程中的临时文件也一并收掉
+		// 上传过程中的临时文件也一并收掉。
+		//
+		// 同样要过冷静期：`.upload-` 是 writeFileAtomic 正在写的中间态，
+		// 另一个请求上传时，这个临时文件正在被写，删掉它会让那次上传直接失败。
 		if strings.HasPrefix(d.Name(), ".upload-") {
+			if info, statErr := d.Info(); statErr == nil && time.Since(info.ModTime()) < orphanGracePeriod {
+				return nil
+			}
 			if err := os.Remove(path); err == nil {
 				removed++
 			}
 			return nil
 		}
+		if _, ok := recent[rel]; ok {
+			// 库里已经知道这个文件（无论何时创建的），无论如何不动它
+			return nil
+		}
 		if _, ok := known[rel]; ok {
 			return nil
 		}
-		if err := os.Remove(path); err != nil {
-			log.Printf("删除孤儿文件 %s 失败: %v", rel, err)
+
+		// 落盘时间也在冷静期内：可能是正在上传，也可能只是个新建的空文件，先放过
+		if info, statErr := d.Info(); statErr == nil && time.Since(info.ModTime()) < orphanGracePeriod {
 			return nil
 		}
-		removed++
+
+		// 删除前最后一次确认：从拿到清单到轮到这个文件，中间隔了整个磁盘遍历的时间，
+		// 足够一个上传把自己的登记写完。
+		removedNow, err := s.removeIfStillOrphan(ctx, path, rel)
+		if err != nil {
+			log.Printf("处理 %s 时出错，本轮跳过: %v", rel, err)
+			return nil
+		}
+		if removedNow {
+			removed++
+		}
 		return nil
 	})
 	if err != nil {
 		return removed, fmt.Errorf("遍历上传目录: %w", err)
 	}
 	return removed, nil
+}
+
+// removeIfStillOrphan 删除一个疑似孤儿文件，并消除「复核」与「删除」之间的窗口。
+//
+// 单纯「查一次库 → os.Remove」是不够的：检查完之后、删之前的那一刻，
+// 另一个请求完全可能完成 writeFileAtomic 并把记录写进库，
+// 于是文件被删而记录还在——用户看到上传成功、下载 404。
+// 复核只把窗口变窄，没有关掉它。
+//
+// 所以先 rename 再复核：rename 到隔离名之后，原来的路径已经空出。
+// 此时如果上传刚把记录写好，说明我们判错了，把文件 rename 回原名即可，
+// 文件与记录重新一致。若复核仍确认未登记，就真的删掉。
+// rename 与后续删除都在同一目录内，不会跨文件系统。
+func (s *FileService) removeIfStillOrphan(ctx context.Context, path, rel string) (bool, error) {
+	tmp := path + ".trash-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	if err := os.Rename(path, tmp); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil // 已经不在了，不是错误
+		}
+		return false, err
+	}
+
+	registered, err := s.repo.ExistsStoragePath(ctx, rel)
+	if err != nil {
+		// 查不到就当成已登记，把它放回去——宁可漏删一个孤儿文件，
+		// 也不能凭一次失败的查询删掉别人的正在上传的文件。
+		if restoreErr := os.Rename(tmp, path); restoreErr != nil {
+			log.Printf("恢复 %s 失败（文件现停在 %s）: %v", rel, tmp, restoreErr)
+		}
+		return false, err
+	}
+	if registered {
+		// 上传在我们 rename 之后完成了登记，把文件放回原名
+		if restoreErr := os.Rename(tmp, path); restoreErr != nil {
+			log.Printf("恢复 %s 失败（文件现停在 %s）: %v", rel, tmp, restoreErr)
+			return false, restoreErr
+		}
+		return false, nil
+	}
+
+	if err := os.Remove(tmp); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // newStoragePath 生成 `<前两位>/<32位十六进制>` 形式的相对路径。

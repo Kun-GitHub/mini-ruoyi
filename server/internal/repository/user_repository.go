@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"mini-ruoyi/internal/domain"
@@ -242,15 +243,18 @@ func (r *UserRepository) CountOtherAdmins(ctx context.Context, excludeID int64) 
 	return n, err
 }
 
-// HasRole 判断用户是否直接持有某个角色。
+// HasRole 判断用户是否直接持有某个**启用**角色。
+//
+// 过滤 status 与权限查询保持同一语义：停用内置 admin 角色这条路已经被
+// RoleService 拦住了，这里的过滤是为了让「停用即撤销」这条规则只有一处解释。
 func (r *UserRepository) HasRole(ctx context.Context, userID int64, roleCode string) (bool, error) {
 	var ok bool
 	err := r.db.QueryRowContext(ctx, `
 		SELECT EXISTS(
 			SELECT 1 FROM sys_user_roles ur
 			JOIN sys_roles r ON r.id = ur.role_id
-			WHERE ur.user_id = ? AND r.code = ?
-		)`, userID, roleCode).Scan(&ok)
+			WHERE ur.user_id = ? AND r.code = ? AND r.status = ?
+		)`, userID, roleCode, domain.StatusActive).Scan(&ok)
 	return ok, err
 }
 
@@ -277,12 +281,22 @@ func (r *UserRepository) RoleIDs(ctx context.Context, userID int64) ([]int64, er
 // ReplaceRoles 在单事务里重设用户的角色绑定。
 //
 // 先删后插必须同事务：中途失败若留下空绑定，该用户会变成无任何权限的账号。
+//
+// 「不能移走最后一个管理员的 admin 角色」这个判断也在这个事务里做，
+// 而不是由调用方先查一次再调这里：分两步的话，两个管理员互相摘对方
+// 的 admin 角色时，两边都会先看到「管理员有 2 个」，然后各自提交成功，
+// 结果一个管理员都不剩。放进同一事务后，SQLite 的单写者模型保证
+// 后提交的那个看到的是前一个提交后的状态。
 func (r *UserRepository) ReplaceRoles(ctx context.Context, userID int64, roleIDs []int64) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback() //nolint:errcheck // Commit 成功后这里是空操作
+
+	if err := guardLastAdminInTx(ctx, tx, userID, roleIDs); err != nil {
+		return err
+	}
 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sys_user_roles WHERE user_id = ?`, userID); err != nil {
 		return err
@@ -294,6 +308,97 @@ func (r *UserRepository) ReplaceRoles(ctx context.Context, userID int64, roleIDs
 		}
 	}
 	return tx.Commit()
+}
+
+// guardLastAdminInTx 在事务内判定「这次重绑会不会摘掉最后一个管理员的 admin 角色」。
+//
+// 三个查询都走同一个 tx，看到的是一致快照；与后面的 DELETE/INSERT 一起
+// 被同一把写锁串行化，因此不存在「两个事务都认为自己不是最后一个」的窗口。
+func guardLastAdminInTx(ctx context.Context, tx *sql.Tx, userID int64, roleIDs []int64) error {
+	// 当前持有 admin 吗？不持有就跟最后管理员无关。
+	var isAdmin bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM sys_user_roles ur
+			JOIN sys_roles r ON r.id = ur.role_id
+			WHERE ur.user_id = ? AND r.code = ? AND r.status = ?
+		)`, userID, domain.RoleCodeAdmin, domain.StatusActive).Scan(&isAdmin); err != nil {
+		return err
+	}
+	if !isAdmin {
+		return nil
+	}
+
+	// 新角色集合里还留着 admin 吗？
+	keeps := false
+	if len(roleIDs) > 0 {
+		placeholders := make([]string, 0, len(roleIDs))
+		args := make([]any, 0, len(roleIDs)+1)
+		for _, id := range roleIDs {
+			placeholders = append(placeholders, "?")
+			args = append(args, id)
+		}
+		args = append(args, domain.RoleCodeAdmin)
+		if err := tx.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM sys_roles WHERE id IN (`+strings.Join(placeholders, ",")+`) AND code = ?)`,
+			args...).Scan(&keeps); err != nil {
+			return err
+		}
+	}
+	if keeps {
+		return nil
+	}
+
+	// 摘掉之后还有别的启用管理员吗？
+	var admins int64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT u.id)
+		FROM sys_users u
+		JOIN sys_user_roles ur ON ur.user_id = u.id
+		JOIN sys_roles r       ON r.id = ur.role_id
+		WHERE r.code = ? AND r.status = ? AND u.status = ?`,
+		domain.RoleCodeAdmin, domain.StatusActive, domain.StatusActive).Scan(&admins); err != nil {
+		return err
+	}
+	if admins <= 1 {
+		return domain.ErrLastAdmin
+	}
+	return nil
+}
+
+// CreateWithRoles 在**单事务**里建用户并绑定角色。
+//
+// 界面上一张表单同时填了账号和角色，后端就必须把它当一件事：
+// 分两次请求的话，第二次失败会留下一个没有任何角色的用户——
+// 用户以为自己建好了，实际登进去什么都看不见，而且界面不会提示。
+func (r *UserRepository) CreateWithRoles(ctx context.Context, u domain.User, roleIDs []int64) (domain.User, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.User{}, err
+	}
+	defer tx.Rollback() //nolint:errcheck // Commit 成功后这里是空操作
+
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO sys_users (status, username, password, nickname, mobile, email)
+		VALUES (?, ?, ?, ?, ?, ?)
+		RETURNING id, created_at, updated_at`,
+		u.Status, u.Username, u.Password, u.Nickname, u.Mobile, u.Email,
+	).Scan(&u.ID, &u.CreatedAt, &u.UpdatedAt)
+	if err != nil {
+		return domain.User{}, err
+	}
+
+	for _, roleID := range roleIDs {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO sys_user_roles (user_id, role_id) VALUES (?, ?)`, u.ID, roleID); err != nil {
+			return domain.User{}, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return domain.User{}, err
+	}
+	return u, nil
 }
 
 // ExistsUsername 判断用户名是否已被占用（excludeID 用于编辑时排除自己）。

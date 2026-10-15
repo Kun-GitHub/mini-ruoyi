@@ -310,7 +310,17 @@ is the entire point of tabs: switching back preserves form contents, scroll posi
 is that more open pages means more live component instances — an admin panel's tab count is in the single digits, which
 is acceptable.
 
-Three traps that tests keep closed:
+The tab list is persisted in **`sessionStorage`** (key `mr.tabs`), so a page refresh keeps your tabs.
+`sessionStorage` rather than `localStorage`: tabs belong to **this** browser session and should be forgotten when the tab
+is closed. `localStorage` would mean "pages I opened last week are still open today" and would fight the "logging out
+clears tabs" semantics.
+
+Reading them back requires a **shape check** (`load()`) — `JSON.parse` and treating the result as `Tab[]` is not enough.
+The stored value may come from an older version or have been edited by hand, and `app-shell` feeds `tab.component`
+straight into component resolution, so a single `undefined` white-screens the whole app. A failed check yields an empty
+array: losing tabs beats failing to boot.
+
+Four traps that tests keep closed:
 
 1. **Open a tab on a "path change", not on "the current path is a menu page".** The latter breaks "close all" — after
    closing, the path has not changed and the effect runs again and adds the tab back. The implementation records
@@ -323,6 +333,10 @@ Three traps that tests keep closed:
 3. **E2E selectors must be scoped to the visible panel.** Every open tab is in the DOM (merely hidden), so a page's
    `data-testid` exists several times over — `getByTestId('filters')` matches multiple elements and trips Playwright's
    strict mode. `filters()` in `e2e/helpers.ts` is already scoped to `[data-testid="tab-panel"]:visible`.
+4. **Logging out must clear the persisted copy too.** Clearing only the in-memory `tabs` means a single refresh brings
+   the old tabs back out of `sessionStorage` — a new risk introduced by remembering tabs, and one that did not exist
+   before. `resetTabs()` goes through `commit([])` so memory and storage are cleared together (pinned by the E2E case
+   "登出后刷新，上一个账号的标签不会复活").
 
 ### 5.8 ⚠️ A 409 is a confirmation signal, not an error
 
@@ -494,12 +508,23 @@ web/dist/assets/*     →  /assets/*, Cache-Control: immutable
 | File | Raw | gzip |
 | --- | --- | --- |
 | `index.html` | 0.5 KB | 0.3 KB |
-| `assets/index-*.css` | 42.7 KB | 8.3 KB |
-| `assets/index-*.js` | 316.7 KB | **93 KB** |
-| `assets/*.woff2` (every Inter variable subset) | 213 KB | — |
-| Total (12 files) | 587.4 KB | — |
+| `assets/index-*.css` | 42.1 KB | 8.1 KB |
+| `assets/index-*.js` | 324.6 KB | **94.2 KB** |
+| `assets/*.woff2` (Inter variable, **latin subset only**) | 48.3 KB | — |
+| Total (3 assets + index.html) | 415.5 KB | — |
 
-The font is the largest single piece. For Chinese and English only it could be trimmed to the latin + latin-ext subsets.
+The font used to be the largest single piece: `@import "@fontsource-variable/inter"` resolves to the package's default
+entry, which carries all 7 subsets (cyrillic / cyrillic-ext / greek / greek-ext / vietnamese / latin-ext / latin) for
+213 KB of woff2. This admin UI is written in Chinese and Inter only ever renders digits and Latin text, so the other
+6 subsets can never be downloaded — their `unicode-range` guarantees it. They were pure dead weight in the build output.
+`app.css` now hand-writes a single `@font-face` for the latin subset: 213 KB → 48.3 KB (−77%).
+
+Note that `wght.css` / `standard.css` are **identical in content** to `index.css` (all 7 subsets), so swapping the
+import entry point does not solve this — writing that block by hand is the only option.
+
+Table body text is 13px and the header is 14px, set in `ui/table/table.svelte` and `table-head.svelte`. The shadcn
+default is `text-xs` (12px), which reads as cramped on a 1080p display; the header being one step larger than the body
+is deliberate, so column titles stand out.
 
 These numbers come from a fresh `make web`. **They drift a little with every build** (the content hashes in the filenames
 change each time), so use them to judge the magnitude and which piece dominates — not as an exact baseline to diff against.
@@ -518,8 +543,8 @@ prefix, remember to add a matching proxy rule.
 
 ## 9. To-do
 
-Multiple tabs, list filtering (users / roles / menus / logs / sessions) and the session management page have all landed;
-see §5.7 and `pages/monitor/sessions.svelte`. What remains:
+Multiple tabs (kept across refreshes), list filtering (users / roles / menus / logs / sessions) and the session management
+page have all landed; see §5.7 and `pages/monitor/sessions.svelte`. What remains:
 
 | Item | Notes |
 | --- | --- |
@@ -534,7 +559,7 @@ Three layers, each with its own job:
 | --- | --- | --- |
 | Types and templates | `npm run check` | svelte-check + tsc |
 | Interface contract | `make test` | the backend's 164 cases (all correctness unrelated to CGO lives here) |
-| Real interaction | `make test-e2e` | Playwright + Chromium, 11 specs / 85 cases |
+| Real interaction | `make test-e2e` | Playwright + Chromium, 11 specs / 89 cases |
 
 E2E goes through `webServer`, which automatically starts **a backend on a temporary database**, clearing it before every
 run — leftover data turns assertions like "N rows in total" into things that depend on execution order, which is very

@@ -511,6 +511,53 @@ func TestPermCatalogueComesFromCode(t *testing.T) {
 	}
 }
 
+// TestCreateUserCannotGrantRolesWithoutEditPerm 是提权路径的回归用例。
+//
+// 角色分配本来要 system:user:edit（见 PUT /users/:id/roles）。
+// 创建用户时一并提交 role_ids 以后，如果 POST /users 只看 system:user:add，
+// 一个只有「新增用户」权限的账号就能建一个带 admin 角色的账号，
+// 再拿它登录——「新增」就变成了提权入口。这里确认拦得住。
+func TestCreateUserCannotGrantRolesWithoutEditPerm(t *testing.T) {
+	r, _ := newTestRouter(t)
+	admin := login(t, r, "admin", "admin123")
+
+	// 造一个只有 system:user:add 的账号
+	w := call(t, r, http.MethodPost, "/api/v1/roles", `{"code":"adder","name":"只能新增"}`, admin)
+	var roleRes struct {
+		Data struct {
+			ID int64 `json:"id"`
+		} `json:"data"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &roleRes)
+
+	w = call(t, r, http.MethodPut, "/api/v1/roles/"+itoa(roleRes.Data.ID)+"/grants",
+		`{"menu_ids":[],"perm_codes":["system:user:add"]}`, admin)
+	if w.Code != http.StatusOK {
+		t.Fatalf("授权失败: %d %s", w.Code, w.Body.String())
+	}
+
+	adderID := createUser(t, r, admin, "adder", "adder-pw")
+	if w := call(t, r, http.MethodPut, "/api/v1/users/"+itoa(adderID)+"/roles",
+		`{"role_ids":[`+itoa(roleRes.Data.ID)+`]}`, admin); w.Code != http.StatusOK {
+		t.Fatalf("给 adder 绑角色失败: %d %s", w.Code, w.Body.String())
+	}
+
+	adder := login(t, r, "adder", "adder-pw")
+
+	// 内置 admin 角色的 id 是 1（种子数据）
+	w = call(t, r, http.MethodPost, "/api/v1/users",
+		`{"username":"sneaky","password":"sneaky-pw","role_ids":[1]}`, adder)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("只有 user:add 却想顺带赋角色，返回 %d，期望 403: %s", w.Code, w.Body.String())
+	}
+
+	// 不带 role_ids 时仍应能建用户：新增权限本身没被削弱
+	if w := call(t, r, http.MethodPost, "/api/v1/users",
+		`{"username":"plain","password":"plain-pw"}`, adder); w.Code != http.StatusOK {
+		t.Errorf("不带角色创建用户返回 %d，期望 200: %s", w.Code, w.Body.String())
+	}
+}
+
 func itoa(v int64) string {
 	return strconv.FormatInt(v, 10)
 }

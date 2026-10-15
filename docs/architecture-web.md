@@ -296,7 +296,15 @@ window.addEventListener('vite:preloadError', () => location.reload())
 这正是多标签页的意义：切回来时表单内容、滚动位置、已加载的数据都还在。
 代价是打开的页面越多，常驻的组件实例越多——管理后台的标签数在个位数量级，可以接受。
 
-三个由测试兜住的坑：
+标签列表持久化在 **`sessionStorage`**（键 `mr.tabs`），所以刷新页面后标签还在。
+选 `sessionStorage` 而不是 `localStorage`：标签属于**这一次**浏览器会话，关掉标签页就该忘掉；
+用 `localStorage` 会变成「上周开过的页面今天还开着」，也和「登出即清标签」的语义打架。
+
+读回来时必须做**形状校验**（`load()`），不能 `JSON.parse` 完当 `Tab[]` 用：
+存储里的内容可能来自旧版本或被人手改过，而 `app-shell` 拿 `tab.component` 直接去渲染组件，
+一个 `undefined` 就能让整个应用白屏。校验不过就当空数组——宁可丢标签，也不能让应用起不来。
+
+四个由测试兜住的坑：
 
 1. **只在「路径变化」时开标签，而不是「当前路径是个菜单页」时开。**
    后者会让「关闭全部」失效——关掉之后路径没变，effect 重跑又把标签加回来。
@@ -310,6 +318,10 @@ window.addEventListener('vite:preloadError', () => location.reload())
    页面内的 `data-testid` 会同时存在多份——`getByTestId('filters')` 会命中多个并触发
    strict mode 报错。`e2e/helpers.ts` 的 `filters()` 已经限定到
    `[data-testid="tab-panel"]:visible`。
+4. **登出必须把持久化的那份一起清掉。** 只清内存 `tabs` 的话，刷新一次
+   `sessionStorage` 里的旧标签又回来了——这正是「记住标签」引入的新风险，
+   也是不持久化时天然不存在的问题。`resetTabs()` 统一走 `commit([])`，
+   内存与存储一起清（E2E 里 `登出后刷新，上一个账号的标签不会复活` 钉住这一点）。
 
 ### 5.8 ⚠️ 409 是确认信号，不是错误
 
@@ -477,12 +489,23 @@ web/dist/assets/*     →  /assets/*，Cache-Control: immutable
 | 文件 | 原始 | gzip |
 | --- | --- | --- |
 | `index.html` | 0.5 KB | 0.3 KB |
-| `assets/index-*.css` | 42.7 KB | 8.3 KB |
-| `assets/index-*.js` | 316.7 KB | **93 KB** |
-| `assets/*.woff2`（Inter 可变字体全部子集） | 213 KB | — |
-| 总计（12 个文件） | 587.4 KB | — |
+| `assets/index-*.css` | 42.1 KB | 8.1 KB |
+| `assets/index-*.js` | 324.6 KB | **94.2 KB** |
+| `assets/*.woff2`（Inter 可变字体，**只有 latin 子集**） | 48.3 KB | — |
+| 总计（assets 3 个 + index.html） | 415.5 KB | — |
 
-字体是最大的一块。若只面向中英文，可裁成 latin + latin-ext 子集。
+字体曾经是最大的一块：`@import "@fontsource-variable/inter"` 走的是包的默认入口，
+带全 7 个子集（cyrillic / cyrillic-ext / greek / greek-ext / vietnamese / latin-ext / latin），
+woff2 合计 213 KB。而本后台的界面文案是中文，Inter 只负责数字与英文，
+后 6 个子集在 `unicode-range` 上就注定不会被下载——纯粹是构建产物里的死体积。
+现在改为在 `app.css` 里手写一段只含 latin 的 `@font-face`，213 KB → 48.3 KB（−77%）。
+
+注意 `wght.css` / `standard.css` 与 `index.css` **内容完全相同**（都是 7 个子集），
+所以「换个入口文件」解决不了这个问题，只能自己写那一段。
+
+表格正文 13px、表头 14px，在 `ui/table/table.svelte` 与 `table-head.svelte` 上设。
+shadcn 上游默认是 `text-xs`（12px），1080p 下看列表偏吃力；
+表头比正文大一档是有意的，让列标题更醒目。
 
 数字取自刚 `make web` 完的产物。**它们会随每次构建小幅波动**（文件名里的内容哈希每次都变），
 所以只用来判断量级与「哪一块占大头」，不要当成精确基线去比对差别。
@@ -501,7 +524,7 @@ npm run build       # 生产构建
 
 ## 9. 待办
 
-多标签页、列表筛选（用户 / 角色 / 菜单 / 日志 / 会话）与会话管理页都已经落地，
+多标签页（含刷新后保留）、列表筛选（用户 / 角色 / 菜单 / 日志 / 会话）与会话管理页都已经落地，
 见 §5.7 与 `pages/monitor/sessions.svelte`。剩下的是：
 
 | 项 | 说明 |
@@ -517,7 +540,7 @@ npm run build       # 生产构建
 | --- | --- | --- |
 | 类型与模板 | `npm run check` | svelte-check + tsc |
 | 接口契约 | `make test` | 后端 164 个用例（CGO 无关的正确性都在这层） |
-| 真实交互 | `make test-e2e` | Playwright + Chromium，11 个 spec / 85 个用例 |
+| 真实交互 | `make test-e2e` | Playwright + Chromium，11 个 spec / 89 个用例 |
 
 E2E 走 `webServer` 自动起一个**用临时库的后端**，每次运行前清库——
 残留数据会让「共 N 条」这类断言变成依赖执行顺序，非常难查。

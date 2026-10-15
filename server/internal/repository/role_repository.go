@@ -150,14 +150,19 @@ func (r *RoleRepository) ListPermCodes(ctx context.Context) ([]string, error) {
 
 // ListPermCodesOfUser 返回某用户通过角色获得的全部权限码（去重）。
 //
-// 注意：内置 admin 角色的权限是隐式放行的，不写 sys_role_perms，
-// 所以这里查不出它的权限——调用方必须先判断是否内置管理员，见 AuthzService。
+// 注意两点：
+//   - 内置 admin 角色的权限是隐式放行的，不写 sys_role_perms，
+//     所以这里查不出它的权限——调用方必须先判断是否内置管理员，见 AuthzService。
+//   - 只看启用状态的角色。停用一个角色就是撤销它带来的全部能力，
+//     若这里不过滤 status，界面上显示「已停用」的角色仍在放行接口，
+//     停用就成了一个只有文案效果的开关。
 func (r *RoleRepository) ListPermCodesOfUser(ctx context.Context, userID int64) ([]string, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT DISTINCT rp.perm_code
 		FROM sys_user_roles ur
+		JOIN sys_roles r       ON r.id = ur.role_id
 		JOIN sys_role_perms rp ON rp.role_id = ur.role_id
-		WHERE ur.user_id = ?`, userID)
+		WHERE ur.user_id = ? AND r.status = ?`, userID, domain.StatusActive)
 	if err != nil {
 		return nil, err
 	}
